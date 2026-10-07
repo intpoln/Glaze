@@ -5,7 +5,10 @@
 #include "GlazePack.h"
 #include "GlazeRecipe.h"
 #include "Materials/Material.h"
+#include "MaterialEditingLibrary.h"
+#include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "MaterialShared.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -17,6 +20,24 @@ namespace
 	bool HasSlot(const Glaze::FNameMatch& M, EGlazeSlot Slot, EGlazeChannel Channel = EGlazeChannel::R)
 	{
 		return M.Slots.ContainsByPredicate([&](const Glaze::FSlotMatch& S) { return S.Slot == Slot && S.Channel == Channel; });
+	}
+
+	/** Synchronously compiles the material's own shaders; returns the errors, or null when nothing can compile here. */
+	const TArray<FString>* CompileErrors(UMaterialInterface* Material, bool* bOutHasShaderMap = nullptr)
+	{
+		const UMaterialInstance* MI = Cast<UMaterialInstance>(Material);
+		FMaterialResource* Resource = !MI || MI->bHasStaticPermutationResource ? Material->GetMaterialResource(GMaxRHIShaderPlatform) : nullptr;
+		if (!Resource)
+		{
+			return nullptr;
+		}
+		Resource->CacheShaders(EMaterialShaderPrecompileMode::Synchronous);
+		Resource->FinishCompilation();
+		if (bOutHasShaderMap)
+		{
+			*bOutHasShaderMap = Resource->GetGameThreadShaderMap() != nullptr;
+		}
+		return &Resource->GetCompileErrors();
 	}
 
 	UTexture2D* NewTexture(const TCHAR* Name)
@@ -115,7 +136,8 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	TSet<FName> Names;
 	for (const FMaterialParameterInfo& I : Infos) { Names.Add(I.Name); }
 	for (const FName N : TArray<FName>{ Glaze::Param::Tiling, Glaze::Param::Rotation, Glaze::Param::ColorContrast, Glaze::Param::LerpAmount,
-		Glaze::Param::Value(EGlazeSlot::Roughness), Glaze::Param::Max(EGlazeSlot::Roughness), Glaze::Param::OpacityAmount })
+		Glaze::Param::Value(EGlazeSlot::Roughness), Glaze::Param::Max(EGlazeSlot::Roughness), Glaze::Param::OpacityAmount,
+		Glaze::Param::DetailSize, Glaze::Param::DetailRoughness })
 	{
 		TestTrue(*FString::Printf(TEXT("scalar %s"), *N.ToString()), Names.Contains(N));
 	}
@@ -124,19 +146,24 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	Names.Reset();
 	for (const FMaterialParameterInfo& I : Infos) { Names.Add(I.Name); }
 	for (const FName N : TArray<FName>{ Glaze::Param::UseMap(EGlazeSlot::BaseColor), Glaze::Param::ColorCorrection, Glaze::Param::FromPacked(EGlazeSlot::Metallic),
-		Glaze::Param::Dithered, Glaze::Param::UseEmissive, Glaze::Param::EmissiveFromBaseColor })
+		Glaze::Param::Dithered, Glaze::Param::UseEmissive, Glaze::Param::EmissiveFromBaseColor,
+		Glaze::Param::UseDetail, Glaze::Param::DetailFromTexture, Glaze::Param::DetailUV, Glaze::Param::DetailLocal, Glaze::Param::DetailPreSkinned })
 	{
 		TestTrue(*FString::Printf(TEXT("switch %s"), *N.ToString()), Names.Contains(N));
 	}
 
 	Material->GetAllTextureParameterInfo(Infos, Ids);
-	TestEqual(TEXT("texture params: base, normal, packed, 5 grayscale, emissive"), Infos.Num(), 9);
+	TestEqual(TEXT("texture params: base, normal, packed, 5 grayscale, emissive, detail"), Infos.Num(), 10);
 	// Masks samplers need linear defaults, or the shader does not compile ("Sampler type is Masks, should be Color").
 	for (const FMaterialParameterInfo& I : Infos)
 	{
 		UTexture* Default = nullptr;
 		Material->GetTextureParameterDefaultValue(I, Default);
-		if (I.Name != Glaze::Param::Map(EGlazeSlot::BaseColor) && I.Name != Glaze::Param::Map(EGlazeSlot::Emissive) && I.Name != Glaze::Param::Map(EGlazeSlot::Normal))
+		if (I.Name == Glaze::Param::DetailMap)
+		{
+			TestTrue(TEXT("detail default is linear grayscale"), Default && !Default->SRGB && Default->CompressionSettings == TC_Grayscale);
+		}
+		else if (I.Name != Glaze::Param::Map(EGlazeSlot::BaseColor) && I.Name != Glaze::Param::Map(EGlazeSlot::Emissive) && I.Name != Glaze::Param::Map(EGlazeSlot::Normal))
 		{
 			TestTrue(*FString::Printf(TEXT("%s default is linear masks"), *I.Name.ToString()),
 				Default && !Default->SRGB && Default->CompressionSettings == TC_Masks);
@@ -203,6 +230,22 @@ bool FGlazeInstanceTest::RunTest(const FString&)
 	R->bEmissiveFromBaseColor = false;
 	R->Emissive = nullptr;
 	ApplyRecipe(MI, *R, Key);
+	// Detail noise in pre-skinned space, procedural (no texture) then from a texture.
+	R->bDetailNoise = true;
+	R->DetailSpace = EGlazeDetailSpace::PreSkinned;
+	ApplyRecipe(MI, *R, Key);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::DetailPreSkinned), bValue, Guid);
+	TestTrue(TEXT("detail pre-skinned"), bValue);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::DetailFromTexture), bValue, Guid);
+	TestFalse(TEXT("procedural detail without texture"), bValue);
+	TestNull(TEXT("no detail map override"), TextureParam(Param::DetailMap));
+	R->DetailNoise = Orm;
+	ApplyRecipe(MI, *R, Key);
+	TestTrue(TEXT("detail map"), TextureParam(Param::DetailMap) == Orm);
+	R->bDetailNoise = false;
+	R->DetailNoise = nullptr;
+	ApplyRecipe(MI, *R, Key);
+	TestNull(TEXT("detail map removed when off"), TextureParam(Param::DetailMap));
 
 	TestTrue(TEXT("masked override"), MI->BasePropertyOverrides.bOverride_BlendMode && MI->BasePropertyOverrides.BlendMode == BLEND_Masked);
 
@@ -219,6 +262,68 @@ bool FGlazeInstanceTest::RunTest(const FString&)
 	// Texture fixes plan: ORM -> masks, linear.
 	const TArray<FTextureFix> Fixes = PlanTextureFixes(*R);
 	TestTrue(TEXT("orm fix planned"), Fixes.ContainsByPredicate([Orm](const FTextureFix& F) { return F.Texture == Orm; }));
+	return true;
+}
+
+/** Compiles real shader permutations (needs a GPU RHI: Tools/runtests.sh Glaze.Compile rhi). */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGlazeCompileTest, "Glaze.Compile", GlazeTestFlags)
+bool FGlazeCompileTest::RunTest(const FString&)
+{
+	using namespace Glaze;
+	UMaterial* Material = NewObject<UMaterial>(GetTransientPackage(), TEXT("M_GlazeCompileTest"), RF_Transient);
+	Material->SetUsageByFlag(MATUSAGE_SkeletalMesh, true);
+	BuildMasterGraph(Material);
+	Material->PostEditChange();
+
+	UTexture2D* Noise = Pack::Noises().Num() > 0 ? Pack::ImportNoise(Pack::Noises()[0], false) : nullptr;
+	TestNotNull(TEXT("pack noise"), Noise);
+	const TArray<UTexture2D*> Wood = Pack::ImportMaterial(TEXT("Wood_Planks"), false);
+
+	struct FCase { const TCHAR* Name; TFunction<void(UGlazeRecipe&)> Setup; };
+	const TArray<FCase> Cases = {
+		{ TEXT("defaults"), [](UGlazeRecipe&) {} },
+		{ TEXT("wood + cc + masked dither + emissive from base"), [](UGlazeRecipe& R)
+			{ R.bColorCorrection = true; R.BlendMode = EGlazeBlend::Masked; R.bDithered = true; R.bEmissive = true; R.bEmissiveFromBaseColor = true; } },
+		{ TEXT("detail uv texture"), [Noise](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailNoise = Noise; R.DetailSpace = EGlazeDetailSpace::UV; } },
+		{ TEXT("detail world texture"), [Noise](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailNoise = Noise; R.DetailSpace = EGlazeDetailSpace::World; } },
+		{ TEXT("detail local procedural"), [](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailSpace = EGlazeDetailSpace::Local; } },
+		{ TEXT("detail pre-skinned texture"), [Noise](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailNoise = Noise; R.DetailSpace = EGlazeDetailSpace::PreSkinned; } },
+		{ TEXT("detail pre-skinned procedural"), [](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailSpace = EGlazeDetailSpace::PreSkinned; } },
+	};
+	for (const FCase& Case : Cases)
+	{
+		UGlazeRecipe* R = NewObject<UGlazeRecipe>();
+		MatchTextures(Wood, *R);
+		Case.Setup(*R);
+		UMaterialInstanceConstant* MI = NewObject<UMaterialInstanceConstant>(GetTransientPackage(), NAME_None, RF_Transient);
+		MI->SetParentEditorOnly(Material);
+		FString Key;
+		ApplyRecipe(MI, *R, Key);
+		bool bHasShaderMap = false;
+		const TArray<FString>* Errors = CompileErrors(MI, &bHasShaderMap);
+		if (!Errors)
+		{
+			AddWarning(FString::Printf(TEXT("%s: no own permutation resource (null RHI?)"), Case.Name));
+			continue;
+		}
+		for (const FString& Error : *Errors)
+		{
+			AddError(FString::Printf(TEXT("%s: %s"), Case.Name, *Error));
+		}
+		TestTrue(*FString::Printf(TEXT("%s: compiled"), Case.Name), bHasShaderMap);
+	}
+
+	// The check itself works: a Masks sampler with an sRGB default (the old v1 bug) must fail.
+	UMaterial* Bad = NewObject<UMaterial>(GetTransientPackage(), TEXT("M_GlazeBadTest"), RF_Transient);
+	auto* Sample = Cast<UMaterialExpressionTextureSampleParameter2D>(
+		UMaterialEditingLibrary::CreateMaterialExpression(Bad, UMaterialExpressionTextureSampleParameter2D::StaticClass()));
+	Sample->ParameterName = TEXT("Bad");
+	Sample->Texture = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/DefaultTexture.DefaultTexture"));
+	Sample->SamplerType = SAMPLERTYPE_Masks;
+	Bad->GetEditorOnlyData()->BaseColor.Connect(0, Sample);
+	Bad->PostEditChange();
+	const TArray<FString>* BadErrors = CompileErrors(Bad);
+	TestTrue(TEXT("wrong sampler type is reported"), BadErrors && BadErrors->Num() > 0);
 	return true;
 }
 

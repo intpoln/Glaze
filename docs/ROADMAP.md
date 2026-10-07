@@ -8,7 +8,7 @@
 - [x] Матчер имён текстур (BaseColor/N/ORM/ARM/gloss/nor_gl…, разрешения, группировка по наборам)
 - [x] Окно Glaze: слоты, UV, Color Correction (Desaturation, Contrast, Brightness, HueShift, Overlay, Lerp to Color = цвет + float, Tint), ремап Roughness/Metallic/Specular/AO, Masked + Dither, Emissive
 - [x] Packed-карты одной выборкой, автоисправление настроек текстур, Edit with Glaze, live preview на выделенных мешах, батч
-- [x] Автотесты Glaze.* (5 шт.)
+- [x] Автотесты Glaze.* (6 шт.)
 - [ ] Визуальная проверка в редакторе (компиляция шейдера, поворот нормали, preview)
 - [ ] Проверка переноса инстанса в чистый проект без плагина
 
@@ -21,7 +21,8 @@
 - [ ] Превью-картинки материалов в меню
 
 ## v2 — детали и WPO
-- [ ] Детали на нойзах: World Space, Local (Object) Space, **Pre-Skinned Local Position** (для скелетал-мешей — детали не «плывут» при анимации); текстурные и 3D-нойзы
+- [x] Детали на нойзах: UV / World / Local (Object) / **Pre-Skinned** (скелеталки — детали не «плывут»); текстура из пака (triplanar в 3D) или процедурный 3D-нойз; влияют на цвет и roughness
+- [x] Тест Glaze.Compile — реальная компиляция шейдеров всех пермутаций (`Tools/runtests.sh Glaze rhi`)
 - [ ] Detail normal, macro variation, triplanar
 - [ ] WPO: ветер/покачивание/нойз (с учётом pre-skinned для скелеталок)
 - [ ] Использование Height
@@ -30,3 +31,4 @@
 - [ ] Пресеты
 - [ ] Код-ревью: Codex (Sol 6.1) + Sonnet 5.5; UX-ревью и предложения от них же; память/пики памяти — отдельный пункт
 - [ ] Поддержка UE 5.7 (только после финализации)
+- [ ] Публикация: репозиторий публичным (перед этим спросить), README со скриншотами и видео использования

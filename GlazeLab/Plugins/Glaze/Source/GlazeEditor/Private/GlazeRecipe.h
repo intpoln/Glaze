@@ -19,6 +19,20 @@ enum class EGlazeBlend : uint8
 	Masked
 };
 
+/** Where the detail noise is projected. */
+UENUM()
+enum class EGlazeDetailSpace : uint8
+{
+	/** Mesh UVs: follows the surface, may show UV seams. */
+	UV,
+	/** World position: seamless, moving objects slide through the noise. */
+	World,
+	/** Object position: sticks to moving / scaled static meshes. */
+	Local UMETA(DisplayName = "Local (Object)"),
+	/** Bind-pose position: sticks to animated skeletal meshes (static meshes behave as Local). */
+	PreSkinned UMETA(DisplayName = "Pre-Skinned (Skeletal)")
+};
+
 /** Texture slots Glaze can fill. Order matters: it is the display order of the slot list. */
 enum class EGlazeSlot : uint8
 {
@@ -229,6 +243,42 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Emissive", meta = (EditCondition = "bEmissive", EditConditionHides, UIMin = "0", UIMax = "50", ClampMin = "0"))
 	float EmissiveIntensity = 1.f;
+
+	// ---- Detail noise: breaks up tiling with grime / variation in color and roughness ----
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Detail Noise"))
+	bool bDetailNoise = false;
+
+	/** Grayscale noise texture (Add → Glaze: Noise from Pack). Empty = procedural 3D noise, no texture needed. */
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Noise Texture", EditCondition = "bDetailNoise", EditConditionHides))
+	TObjectPtr<UTexture2D> DetailNoise;
+
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Space", EditCondition = "bDetailNoise", EditConditionHides))
+	EGlazeDetailSpace DetailSpace = EGlazeDetailSpace::World;
+
+	/** Noise repeats per UV tile. */
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Tiling", EditCondition = "bDetailNoise && DetailSpace == EGlazeDetailSpace::UV", EditConditionHides, UIMin = "0.1", UIMax = "16", ClampMin = "0.001"))
+	float DetailTiling = 2.f;
+
+	/** Size of one noise tile in centimeters. */
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Size", EditCondition = "bDetailNoise && DetailSpace != EGlazeDetailSpace::UV", EditConditionHides, UIMin = "1", UIMax = "1000", ClampMin = "0.01", Units = "Centimeters"))
+	float DetailSize = 200.f;
+
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Contrast", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "0", UIMax = "8", ClampMin = "0"))
+	float DetailContrast = 1.f;
+
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Bias", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "-1", UIMax = "1"))
+	float DetailBias = 0.f;
+
+	/** Base color is blended towards this color where the noise is bright. */
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Color", EditCondition = "bDetailNoise", EditConditionHides, HideAlphaChannel))
+	FLinearColor DetailColor = FLinearColor(0.05f, 0.04f, 0.03f);
+
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Color Amount", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "0", UIMax = "1"))
+	float DetailColorAmount = 0.3f;
+
+	/** Added to roughness where the noise is bright (negative = shinier). */
+	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Roughness Amount", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "-1", UIMax = "1"))
+	float DetailRoughness = 0.15f;
 
 	FOnGlazeRecipeChanged OnChanged;
 

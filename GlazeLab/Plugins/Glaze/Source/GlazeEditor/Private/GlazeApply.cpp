@@ -23,7 +23,7 @@ namespace
 
 	const EGlazeSlot GrayscaleSlots[] = { EGlazeSlot::Roughness, EGlazeSlot::Metallic, EGlazeSlot::AmbientOcclusion, EGlazeSlot::Specular, EGlazeSlot::Opacity };
 
-	enum class EUse : uint8 { Color, Normal, Masks };
+	enum class EUse : uint8 { Color, Normal, Masks, Grayscale };
 
 	EUse UseOf(EGlazeSlot Slot)
 	{
@@ -98,6 +98,10 @@ namespace
 				Uses.FindOrAdd(T).Add(UseOf(Slot));
 			}
 		}
+		if (R.bDetailNoise && R.DetailNoise)
+		{
+			Uses.FindOrAdd(R.DetailNoise).Add(EUse::Grayscale);
+		}
 		return Uses;
 	}
 
@@ -138,6 +142,10 @@ TArray<FTextureFix> PlanTextureFixes(const UGlazeRecipe& Recipe, TArray<FString>
 			break;
 		case EUse::Masks:
 			if (T->CompressionSettings != TC_Masks) { Changes.Add(TEXT("Masks")); }
+			if (T->SRGB) { Changes.Add(TEXT("sRGB off")); }
+			break;
+		case EUse::Grayscale:
+			if (T->CompressionSettings != TC_Grayscale) { Changes.Add(TEXT("Grayscale")); }
 			if (T->SRGB) { Changes.Add(TEXT("sRGB off")); }
 			break;
 		case EUse::Color:
@@ -185,6 +193,10 @@ TArray<UTexture2D*> FixTextureSettings(const UGlazeRecipe& Recipe)
 			break;
 		case EUse::Masks:
 			T->CompressionSettings = TC_Masks;
+			T->SRGB = false;
+			break;
+		case EUse::Grayscale:
+			T->CompressionSettings = TC_Grayscale;
 			T->SRGB = false;
 			break;
 		case EUse::Color:
@@ -278,6 +290,22 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	SetTexture(Map(EGlazeSlot::Emissive), bEmissiveMap ? R.Emissive.Get() : nullptr);
 	Vector(EmissiveColor, R.EmissiveColor);
 	Scalar(EmissiveIntensity, R.EmissiveIntensity);
+
+	// Detail noise
+	const bool bDetail = R.bDetailNoise;
+	Switches.Add({ UseDetail, bDetail });
+	Switches.Add({ DetailFromTexture, bDetail && R.DetailNoise != nullptr });
+	Switches.Add({ DetailUV, bDetail && R.DetailSpace == EGlazeDetailSpace::UV });
+	Switches.Add({ DetailLocal, bDetail && R.DetailSpace == EGlazeDetailSpace::Local });
+	Switches.Add({ DetailPreSkinned, bDetail && R.DetailSpace == EGlazeDetailSpace::PreSkinned });
+	SetTexture(DetailMap, bDetail ? R.DetailNoise.Get() : nullptr);
+	Scalar(DetailTiling, R.DetailTiling);
+	Scalar(DetailSize, R.DetailSize);
+	Scalar(DetailContrast, R.DetailContrast);
+	Scalar(DetailBias, R.DetailBias);
+	Vector(DetailColor, R.DetailColor);
+	Scalar(DetailColorAmount, R.DetailColorAmount);
+	Scalar(DetailRoughness, R.DetailRoughness);
 
 	// Static state: switches + base property overrides. Only a change here needs a recompile.
 	FString Key;
