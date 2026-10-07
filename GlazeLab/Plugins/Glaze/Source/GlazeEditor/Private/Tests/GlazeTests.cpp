@@ -131,6 +131,17 @@ bool FGlazeMasterTest::RunTest(const FString&)
 
 	Material->GetAllTextureParameterInfo(Infos, Ids);
 	TestEqual(TEXT("texture params: base, normal, packed, 5 grayscale, emissive"), Infos.Num(), 9);
+	// Masks samplers need linear defaults, or the shader does not compile ("Sampler type is Masks, should be Color").
+	for (const FMaterialParameterInfo& I : Infos)
+	{
+		UTexture* Default = nullptr;
+		Material->GetTextureParameterDefaultValue(I, Default);
+		if (I.Name != Glaze::Param::Map(EGlazeSlot::BaseColor) && I.Name != Glaze::Param::Map(EGlazeSlot::Emissive) && I.Name != Glaze::Param::Map(EGlazeSlot::Normal))
+		{
+			TestTrue(*FString::Printf(TEXT("%s default is linear masks"), *I.Name.ToString()),
+				Default && !Default->SRGB && Default->CompressionSettings == TC_Masks);
+		}
+	}
 	return true;
 }
 

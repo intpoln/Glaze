@@ -1,5 +1,6 @@
 #include "GlazeMaster.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "Engine/Texture2D.h"
 #include "Factories/MaterialFactoryNew.h"
@@ -71,6 +72,28 @@ namespace
 {
 	const FName MetaVersionKey(TEXT("GlazeMasterVersion"));
 
+	/** White 4x4 linear (Masks) texture in the project, next to the master: default of the grayscale map parameters. */
+	UTexture* DefaultMaskTexture()
+	{
+		const TCHAR* PackageName = TEXT("/Game/Glaze/T_Glaze_DefaultMask");
+		if (UTexture2D* Existing = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Glaze/T_Glaze_DefaultMask.T_Glaze_DefaultMask"), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			return Existing;
+		}
+		UPackage* Package = CreatePackage(PackageName);
+		UTexture2D* Texture = NewObject<UTexture2D>(Package, TEXT("T_Glaze_DefaultMask"), RF_Public | RF_Standalone);
+		TArray<uint8> Pixels;
+		Pixels.Init(255, 4 * 4 * 4);
+		Texture->Source.Init(4, 4, 1, 1, TSF_BGRA8, Pixels.GetData());
+		Texture->CompressionSettings = TC_Masks;
+		Texture->SRGB = false;
+		Texture->PostEditChange();
+		FAssetRegistryModule::AssetCreated(Texture);
+		Package->MarkPackageDirty();
+		UEditorLoadingAndSavingUtils::SavePackages({ Package }, /*bOnlyDirty*/ false);
+		return Texture;
+	}
+
 	/** One output of an expression. */
 	struct FPin
 	{
@@ -138,7 +161,8 @@ namespace
 		{
 			auto* E = New<UMaterialExpressionTextureSampleParameter2D>();
 			E->ParameterName = Name;
-			E->Texture = LoadObject<UTexture>(nullptr, DefaultPath);
+			// Masks samplers need a linear default: engine white textures are sRGB and fail to compile there.
+			E->Texture = Type == SAMPLERTYPE_Masks ? DefaultMaskTexture() : LoadObject<UTexture>(nullptr, DefaultPath);
 			E->SamplerType = Type;
 			E->SamplerSource = SSM_Wrap_WorldGroupSettings; // shared samplers: no 16-sampler limit
 			E->Group = TEXT("01 Textures");
@@ -273,7 +297,7 @@ namespace
 
 	const TCHAR* DefaultColorTexture = TEXT("/Engine/EngineResources/DefaultTexture.DefaultTexture");
 	const TCHAR* DefaultNormalTexture = TEXT("/Engine/EngineMaterials/DefaultNormal.DefaultNormal");
-	const TCHAR* DefaultMasksTexture = TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture");
+	const TCHAR* DefaultMasksTexture = TEXT("/Game/Glaze/T_Glaze_DefaultMask.T_Glaze_DefaultMask");
 }
 
 void BuildMasterGraph(UMaterial* Material)
