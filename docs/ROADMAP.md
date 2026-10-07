@@ -8,15 +8,17 @@
 - [x] Матчер имён текстур (BaseColor/N/ORM/ARM/gloss/nor_gl…, разрешения, группировка по наборам)
 - [x] Окно Glaze: слоты, UV, Color Correction (Desaturation, Contrast, Brightness, HueShift, Overlay, Lerp to Color = цвет + float, Tint), ремап Roughness/Metallic/Specular/AO, Masked + Dither, Emissive
 - [x] Packed-карты одной выборкой, автоисправление настроек текстур, Edit with Glaze, live preview на выделенных мешах, батч
-- [x] Автотесты Glaze.* (4 шт.)
+- [x] Автотесты Glaze.* (5 шт.)
 - [ ] Визуальная проверка в редакторе (компиляция шейдера, поворот нормали, preview)
 - [ ] Проверка переноса инстанса в чистый проект без плагина
 
 ## v1 — пак текстур
-- [ ] Бесшовные базовые текстуры 2k/1k: дерево, камень, кирпич, металл, ткань, земля, плитка, штукатурка… Не только сканы — нужны и простые/казуальные (stylized)
-- [ ] Нойзы для деталей (бесшовные; генерация своими силами)
-- [ ] Источники на проверку: CC0-библиотеки, PocketTextureLab (https://intpoln.github.io/PocketTextureLab/), Blender (процедурные шейдеры → bake, бесплатные аддоны), генерация через Codex
-- [ ] При использовании пак копируется в `/Game/Glaze/...` (переносимость)
+- [x] 18 бесшовных материалов (BC/N(DX)/ORM, 2k+1k) из Pocket Texture Lab: доски, древесина, кирпич, булыжник, плитняк, скала, бетон, асфальт, плитка, мрамор, штукатурка, земля, песок, трава, ткань, металл крашеный/ржавый/шлифованный
+- [x] 21 бесшовный нойз (grayscale, 2k+1k)
+- [x] Конвейер: Tools/texgen (receiver.py + materials.js + package_pack.py), графы в TexturePack/graphs, PNG в Git LFS
+- [x] Content Browser → Add → «Glaze: Material from Pack» / «Glaze: Noise from Pack»: импорт в `/Game/Glaze/Pack/...` (переносимость), окно Glaze
+- [ ] Посмотреть пак в редакторе на сфере/кубе; при желании — сканы (ambientCG/Poly Haven, с разрешения), Blender для органики
+- [ ] Превью-картинки материалов в меню
 
 ## v2 — детали и WPO
 - [ ] Детали на нойзах: World Space, Local (Object) Space, **Pre-Skinned Local Position** (для скелетал-мешей — детали не «плывут» при анимации); текстурные и 3D-нойзы

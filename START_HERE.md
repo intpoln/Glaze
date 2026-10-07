@@ -18,7 +18,13 @@
 | `docs/` | концепция, архитектура, план |
 | `icons/` | иконки (генерирует Codex) |
 | `notes/` | тексты Codex (брейншторм, ревью) |
-| `D:\EGL\UE_5.8` | движок |
+| `GlazeLab/` | тестовый проект UE 5.8; плагин в `GlazeLab/Plugins/Glaze` (C++ модуль GlazeEditor) |
+| `GlazeLab/Plugins/Glaze/Resources/Pack` | пак текстур (PNG в Git LFS) + pack.json |
+| `Tools/build.sh`, `Tools/runtests.sh Glaze` | сборка и автотесты |
+| `Tools/texgen/` | генерация пака через Pocket Texture Lab (см. receiver.py, materials.js) |
+| `TexturePack/graphs` | исходные графы PTL для материалов пака |
+| `docs/ROADMAP.md` | план |
+| `D:\EGL\UE_5.8` | движок (5.7 — только после финала) |
 
 ## 3. Правила (из Kiln)
 - Субагенты (Agent tool) — только модель **sonnet**; могут писать код. Сборку/запуск редактора держит один главный агент, субагенты правят непересекающиеся файлы.
@@ -33,4 +39,5 @@
 - Heredoc в bash ломается на сложном коде — писать файлы через Write.
 
 ## 4. Статус
+- 2026-10-07: плагин v0 (мастер, матчер, окно; 5 автотестов зелёные), пак 18 материалов + 21 нойз в меню Add. Дальше: визуальная проверка в редакторе, v2 (нойз-детали World/Local/Pre-Skinned, WPO).
 - 2026-10-07: проект создан; Codex — брейншторм архитектуры/UX (`notes/codex_brainstorm.log`) и иконки (`icons/`).
