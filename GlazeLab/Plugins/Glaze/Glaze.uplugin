@@ -1,0 +1,14 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Glaze",
+	"Description": "Build material instances from texture sets in one window: auto slot matching, color correction, roughness/specular/AO remap, details. Results do not depend on the plugin.",
+	"Category": "Materials",
+	"CreatedBy": "intpoln",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Modules": [
+		{ "Name": "GlazeEditor", "Type": "Editor", "LoadingPhase": "Default" }
+	]
+}
