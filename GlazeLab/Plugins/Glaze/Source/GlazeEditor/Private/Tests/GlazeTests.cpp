@@ -124,7 +124,7 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	Names.Reset();
 	for (const FMaterialParameterInfo& I : Infos) { Names.Add(I.Name); }
 	for (const FName N : TArray<FName>{ Glaze::Param::UseMap(EGlazeSlot::BaseColor), Glaze::Param::ColorCorrection, Glaze::Param::FromPacked(EGlazeSlot::Metallic),
-		Glaze::Param::Dithered, Glaze::Param::UseEmissive })
+		Glaze::Param::Dithered, Glaze::Param::UseEmissive, Glaze::Param::EmissiveFromBaseColor })
 	{
 		TestTrue(*FString::Printf(TEXT("switch %s"), *N.ToString()), Names.Contains(N));
 	}
@@ -191,6 +191,19 @@ bool FGlazeInstanceTest::RunTest(const FString&)
 	FLinearColor Channel;
 	MI->GetVectorParameterValue(FHashedMaterialParameterInfo(Param::Channel(EGlazeSlot::Metallic)), Channel);
 	TestEqual(TEXT("metallic reads B"), Channel, FLinearColor(0, 0, 1, 0));
+	// Emissive from the base color texture: no own emissive map.
+	R->bEmissive = true;
+	R->bEmissiveFromBaseColor = true;
+	R->Emissive = Orm;
+	ApplyRecipe(MI, *R, Key);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::EmissiveFromBaseColor), bValue, Guid);
+	TestTrue(TEXT("emissive from base color"), bValue);
+	TestNull(TEXT("no emissive map override"), TextureParam(Param::Map(EGlazeSlot::Emissive)));
+	R->bEmissive = false;
+	R->bEmissiveFromBaseColor = false;
+	R->Emissive = nullptr;
+	ApplyRecipe(MI, *R, Key);
+
 	TestTrue(TEXT("masked override"), MI->BasePropertyOverrides.bOverride_BlendMode && MI->BasePropertyOverrides.BlendMode == BLEND_Masked);
 
 	// Same static state: the instance is not touched again.

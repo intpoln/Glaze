@@ -220,6 +220,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Emissive", meta = (DisplayName = "Emissive"))
 	bool bEmissive = false;
 
+	/** Glow with the Base Color texture (no extra sample). The Emissive Map slot is ignored while this is on. */
+	UPROPERTY(EditAnywhere, Category = "Emissive", meta = (DisplayName = "Use Base Color Texture", EditCondition = "bEmissive", EditConditionHides))
+	bool bEmissiveFromBaseColor = false;
+
 	UPROPERTY(EditAnywhere, Category = "Emissive", meta = (EditCondition = "bEmissive", EditConditionHides, HideAlphaChannel))
 	FLinearColor EmissiveColor = FLinearColor::White;
 

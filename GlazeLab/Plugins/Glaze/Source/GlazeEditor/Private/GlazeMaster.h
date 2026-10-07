@@ -8,7 +8,7 @@ class UMaterial;
 namespace Glaze
 {
 	/** Bump when the master graph changes: older masters in projects are rebuilt in place (instances keep their values). */
-	constexpr int32 MasterVersion = 2;
+	constexpr int32 MasterVersion = 3;
 
 	/** The master lives in the PROJECT (not in the plugin), so instances keep working when Glaze is not installed. */
 	extern const TCHAR* MasterPackagePath; // /Game/Glaze/M_Glaze
@@ -42,6 +42,6 @@ namespace Glaze
 		extern const FName OverlayColor, OverlayAmount, LerpColor, LerpAmount;
 		extern const FName NormalStrength, FlipGreen;
 		extern const FName UseOpacity, OpacityAmount, Dithered;
-		extern const FName UseEmissive, EmissiveColor, EmissiveIntensity;
+		extern const FName UseEmissive, EmissiveFromBaseColor, EmissiveColor, EmissiveIntensity;
 	}
 }

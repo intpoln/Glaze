@@ -271,8 +271,11 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 
 	// Emissive
 	Switches.Add({ UseEmissive, R.bEmissive });
-	Switches.Add({ UseMap(EGlazeSlot::Emissive), R.bEmissive && R.Emissive != nullptr });
-	SetTexture(Map(EGlazeSlot::Emissive), R.bEmissive ? R.Emissive.Get() : nullptr);
+	const bool bEmissiveFromBase = R.bEmissive && R.bEmissiveFromBaseColor && R.BaseColor != nullptr;
+	const bool bEmissiveMap = R.bEmissive && !bEmissiveFromBase && R.Emissive != nullptr;
+	Switches.Add({ EmissiveFromBaseColor, bEmissiveFromBase });
+	Switches.Add({ UseMap(EGlazeSlot::Emissive), bEmissiveMap });
+	SetTexture(Map(EGlazeSlot::Emissive), bEmissiveMap ? R.Emissive.Get() : nullptr);
 	Vector(EmissiveColor, R.EmissiveColor);
 	Scalar(EmissiveIntensity, R.EmissiveIntensity);
 

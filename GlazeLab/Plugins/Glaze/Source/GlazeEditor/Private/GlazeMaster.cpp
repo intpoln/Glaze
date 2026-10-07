@@ -65,7 +65,7 @@ namespace Param
 	const FName LerpColor(TEXT("Lerp Color")), LerpAmount(TEXT("Lerp Amount"));
 	const FName NormalStrength(TEXT("Normal Strength")), FlipGreen(TEXT("Flip Green"));
 	const FName UseOpacity(TEXT("Use Opacity")), OpacityAmount(TEXT("Opacity Amount")), Dithered(TEXT("Dithered Opacity"));
-	const FName UseEmissive(TEXT("Use Emissive")), EmissiveColor(TEXT("Emissive Color")), EmissiveIntensity(TEXT("Emissive Intensity"));
+	const FName UseEmissive(TEXT("Use Emissive")), EmissiveFromBaseColor(TEXT("Emissive From Base Color")), EmissiveColor(TEXT("Emissive Color")), EmissiveIntensity(TEXT("Emissive Intensity"));
 }
 
 namespace
@@ -398,7 +398,8 @@ void BuildMasterGraph(UMaterial* Material)
 	{
 		const TCHAR* Group = TEXT("11 Emissive");
 		UMaterialExpressionTextureSampleParameter2D* EmissiveTex = G.Texture(Param::Map(EGlazeSlot::Emissive), DefaultColorTexture, SAMPLERTYPE_Color, UV);
-		const FPin Map = G.Switch(Param::UseMap(EGlazeSlot::Emissive), { EmissiveTex, OutRGB }, G.Const3(FLinearColor::White), Group);
+		FPin Map = G.Switch(Param::UseMap(EGlazeSlot::Emissive), { EmissiveTex, OutRGB }, G.Const3(FLinearColor::White), Group);
+		Map = G.Switch(Param::EmissiveFromBaseColor, { BaseTex, OutRGB }, Map, Group);
 		const FPin Emissive = G.Mul(G.Mul(Map, G.Vector(Param::EmissiveColor, FLinearColor::White, Group)),
 			G.Scalar(Param::EmissiveIntensity, 1.f, Group, 0.f, 50.f));
 		Link(Out->EmissiveColor, G.Switch(Param::UseEmissive, Emissive, G.Const3(FLinearColor::Black), Group));
