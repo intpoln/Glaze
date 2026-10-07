@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<defs>
+  <linearGradient id="glaze" gradientUnits="userSpaceOnUse" x1="30" y1="20" x2="100" y2="110">
+    <stop offset="0" stop-color="#6EF0E0"/><stop offset="0.48" stop-color="#19C3C3"/><stop offset="1" stop-color="#087C88"/>
+  </linearGradient>
+  <linearGradient id="normal" gradientUnits="userSpaceOnUse" x1="62" y1="40" x2="110" y2="106">
+    <stop offset="0" stop-color="#A8ABFF"/><stop offset="0.5" stop-color="#727AE8"/><stop offset="1" stop-color="#3E52A0"/>
+  </linearGradient>
+  <linearGradient id="rough" gradientUnits="userSpaceOnUse" x1="22" y1="60" x2="80" y2="114">
+    <stop offset="0" stop-color="#CCD3D5"/><stop offset="1" stop-color="#727E88"/>
+  </linearGradient>
+  <linearGradient id="warm" gradientUnits="userSpaceOnUse" x1="28" y1="28" x2="94" y2="96">
+    <stop offset="0" stop-color="#FFB16C"/><stop offset="1" stop-color="#FF8A3D"/>
+  </linearGradient>
+  <linearGradient id="ceramic" gradientUnits="userSpaceOnUse" x1="25" y1="60" x2="98" y2="115">
+    <stop offset="0" stop-color="#FFE3B4"/><stop offset="0.6" stop-color="#FFAF67"/><stop offset="1" stop-color="#D96B31"/>
+  </linearGradient>
+</defs>
+<rect x="31" y="12" width="39" height="39" rx="7" fill="url(#rough)" stroke="#1E1E24" stroke-width="6"/>
+<path d="M43 24 L59 24 L59 39 L43 39 Z" fill="#E4EAEB"/>
+<rect x="21" y="23" width="39" height="39" rx="7" fill="url(#normal)" stroke="#1E1E24" stroke-width="6"/>
+<path d="M32 34 L46 34 L49 47 L35 47 Z" fill="#B6B7FF"/>
+<rect x="11" y="34" width="39" height="39" rx="7" fill="url(#glaze)" stroke="#1E1E24" stroke-width="6"/>
+<path d="M21 57 L29 46 L40 59" fill="none" stroke="#A7FFF0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M82 20 C103 23 112 40 109 56 L118 56 L102 74 L88 55 L97 55 C99 45 94 35 81 33 Z" fill="url(#warm)" stroke="#1E1E24" stroke-width="5" stroke-linejoin="round"/>
+<circle cx="76" cy="85" r="31" fill="url(#glaze)" stroke="#1E1E24" stroke-width="7"/>
+<path d="M57 77 C62 69 69 65 76 65" fill="none" stroke="#EEFFF8" stroke-width="8" stroke-linecap="round"/>
+<path d="M83 105 C90 103 96 98 98 91" fill="none" stroke="#0D929A" stroke-width="5" stroke-linecap="round"/>
+
+</svg>

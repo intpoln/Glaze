@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<defs>
+  <linearGradient id="glaze" gradientUnits="userSpaceOnUse" x1="30" y1="20" x2="100" y2="110">
+    <stop offset="0" stop-color="#6EF0E0"/><stop offset="0.48" stop-color="#19C3C3"/><stop offset="1" stop-color="#087C88"/>
+  </linearGradient>
+  <linearGradient id="normal" gradientUnits="userSpaceOnUse" x1="62" y1="40" x2="110" y2="106">
+    <stop offset="0" stop-color="#A8ABFF"/><stop offset="0.5" stop-color="#727AE8"/><stop offset="1" stop-color="#3E52A0"/>
+  </linearGradient>
+  <linearGradient id="rough" gradientUnits="userSpaceOnUse" x1="22" y1="60" x2="80" y2="114">
+    <stop offset="0" stop-color="#CCD3D5"/><stop offset="1" stop-color="#727E88"/>
+  </linearGradient>
+  <linearGradient id="warm" gradientUnits="userSpaceOnUse" x1="28" y1="28" x2="94" y2="96">
+    <stop offset="0" stop-color="#FFB16C"/><stop offset="1" stop-color="#FF8A3D"/>
+  </linearGradient>
+  <linearGradient id="ceramic" gradientUnits="userSpaceOnUse" x1="25" y1="60" x2="98" y2="115">
+    <stop offset="0" stop-color="#FFE3B4"/><stop offset="0.6" stop-color="#FFAF67"/><stop offset="1" stop-color="#D96B31"/>
+  </linearGradient>
+</defs>
+<defs><clipPath id="ball"><circle cx="64" cy="65" r="49"/></clipPath></defs>
+<circle cx="64" cy="65" r="49" fill="url(#rough)"/>
+<g clip-path="url(#ball)">
+  <path d="M73 16 C112 27 125 76 103 104 C88 120 69 119 58 109 C77 84 81 54 73 16 Z" fill="url(#normal)"/>
+  <path d="M75 57 C80 78 72 101 59 114" fill="none" stroke="#1E1E24" stroke-width="6"/>
+  <path d="M11 14 L115 14 L116 48 C101 49 103 62 94 63 C82 65 88 46 78 47 C67 47 73 79 61 80 C48 81 54 52 43 52 C32 53 33 64 21 61 L10 58 Z" fill="url(#glaze)" stroke="#1E1E24" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M31 70 L36 75 L31 80 L26 75 Z" fill="#ECF0F1"/>
+  <path d="M41 86 L46 91 L41 96 L36 91 Z" fill="#A5AFB6"/>
+  <path d="M86 77 L97 70 L103 82 L92 89 Z" fill="#A2A9FF"/>
+  <path d="M92 89 L103 82 L102 95 L91 102 Z" fill="#5964C7"/>
+</g>
+<circle cx="64" cy="65" r="49" fill="none" stroke="#1E1E24" stroke-width="7"/>
+<path d="M32 39 C39 30 49 27 59 27" fill="none" stroke="#EEFFF8" stroke-width="9" stroke-linecap="round"/>
+<path d="M67 28 L71 29" fill="none" stroke="#C8FFF3" stroke-width="6" stroke-linecap="round"/>
+<path d="M61 58 L61 68" fill="none" stroke="#A7FFF0" stroke-width="4" stroke-linecap="round"/>
+<path d="M102 16 L106 25 L115 29 L106 33 L102 42 L98 33 L89 29 L98 25 Z" fill="#FF8A3D" stroke="#1E1E24" stroke-width="4" stroke-linejoin="round"/>
+
+</svg>

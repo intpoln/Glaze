@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<defs>
+  <linearGradient id="glaze" gradientUnits="userSpaceOnUse" x1="30" y1="20" x2="100" y2="110">
+    <stop offset="0" stop-color="#6EF0E0"/><stop offset="0.48" stop-color="#19C3C3"/><stop offset="1" stop-color="#087C88"/>
+  </linearGradient>
+  <linearGradient id="normal" gradientUnits="userSpaceOnUse" x1="62" y1="40" x2="110" y2="106">
+    <stop offset="0" stop-color="#A8ABFF"/><stop offset="0.5" stop-color="#727AE8"/><stop offset="1" stop-color="#3E52A0"/>
+  </linearGradient>
+  <linearGradient id="rough" gradientUnits="userSpaceOnUse" x1="22" y1="60" x2="80" y2="114">
+    <stop offset="0" stop-color="#CCD3D5"/><stop offset="1" stop-color="#727E88"/>
+  </linearGradient>
+  <linearGradient id="warm" gradientUnits="userSpaceOnUse" x1="28" y1="28" x2="94" y2="96">
+    <stop offset="0" stop-color="#FFB16C"/><stop offset="1" stop-color="#FF8A3D"/>
+  </linearGradient>
+  <linearGradient id="ceramic" gradientUnits="userSpaceOnUse" x1="25" y1="60" x2="98" y2="115">
+    <stop offset="0" stop-color="#FFE3B4"/><stop offset="0.6" stop-color="#FFAF67"/><stop offset="1" stop-color="#D96B31"/>
+  </linearGradient>
+</defs>
+<path d="M49 104 L79 104 L85 116 L43 116 Z" fill="url(#ceramic)" stroke="#1E1E24" stroke-width="6" stroke-linejoin="round"/>
+<path d="M18 59 C20 85 36 108 64 109 C92 108 108 85 110 59 Z" fill="url(#ceramic)" stroke="#1E1E24" stroke-width="7" stroke-linejoin="round"/>
+<path d="M20 61 C31 66 35 61 41 66 C47 71 40 86 49 87 C59 88 54 66 65 66 C78 66 67 94 79 94 C89 94 84 71 94 68 C100 67 107 63 109 60 L105 51 L25 51 Z" fill="url(#glaze)" stroke="#1E1E24" stroke-width="5" stroke-linejoin="round"/>
+<ellipse cx="64" cy="55" rx="46" ry="14" fill="#086C77" stroke="#1E1E24" stroke-width="6"/>
+<path d="M31 54 C47 47 83 47 98 54" fill="none" stroke="#6EF0E0" stroke-width="5" stroke-linecap="round"/>
+<path d="M73 13 L92 13 C89 25 78 34 74 45 C72 50 73 56 68 59 C63 62 57 59 57 53 C57 41 68 27 73 13 Z" fill="url(#glaze)" stroke="#1E1E24" stroke-width="6" stroke-linejoin="round"/>
+<path d="M78 21 C76 30 67 38 65 46" fill="none" stroke="#ECFFF8" stroke-width="5" stroke-linecap="round"/>
+<path d="M30 72 C33 81 37 86 42 89" fill="none" stroke="#ECFFF8" stroke-width="7" stroke-linecap="round"/>
+<path d="M98 16 L101 22 L107 25 L101 28 L98 34 L95 28 L89 25 L95 22 Z" fill="#FF8A3D" stroke="#1E1E24" stroke-width="4" stroke-linejoin="round"/>
+
+</svg>
