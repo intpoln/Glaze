@@ -25,7 +25,8 @@ public:
 	virtual ~SGlazeWindow() override;
 
 	/** Selected textures; several sets (by name) are created one after another with the same settings. */
-	static void OpenForTextures(const TArray<UTexture2D*>& Textures);
+	/** OutputFolder: where instances go (empty = next to the first texture). */
+	static void OpenForTextures(const TArray<UTexture2D*>& Textures, const FString& OutputFolder = FString());
 	/** Reopens a Glaze instance with its saved recipe. */
 	static void OpenForInstance(UMaterialInstanceConstant* Instance);
 
@@ -68,6 +69,7 @@ private:
 	TWeakObjectPtr<UMaterialInstanceConstant> EditTarget;
 
 	TArray<TPair<FString, TArray<UTexture2D*>>> Sets;
+	FString OutputFolder;
 	int32 SetIndex = 0;
 	TArray<FString> MatchNotes;
 

@@ -2,6 +2,7 @@
 #include "GlazeApply.h"
 #include "GlazeMaster.h"
 #include "GlazeMatcher.h"
+#include "GlazePack.h"
 #include "GlazeRecipe.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -190,6 +191,44 @@ bool FGlazeInstanceTest::RunTest(const FString&)
 	// Texture fixes plan: ORM -> masks, linear.
 	const TArray<FTextureFix> Fixes = PlanTextureFixes(*R);
 	TestTrue(TEXT("orm fix planned"), Fixes.ContainsByPredicate([Orm](const FTextureFix& F) { return F.Texture == Orm; }));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGlazePackTest, "Glaze.Pack", GlazeTestFlags)
+bool FGlazePackTest::RunTest(const FString&)
+{
+	using namespace Glaze;
+	TestTrue(TEXT("pack materials"), Pack::Materials().Num() >= 10);
+	TestTrue(TEXT("pack noises"), Pack::Noises().Num() >= 10);
+	TestTrue(TEXT("wood planks listed"), Pack::Materials().Contains(TEXT("Wood_Planks")));
+
+	// Imports into the lab project's /Game/Glaze/Pack (reused on later runs).
+	const TArray<UTexture2D*> Textures = Pack::ImportMaterial(TEXT("Wood_Planks"), false);
+	TestEqual(TEXT("three maps"), Textures.Num(), 3);
+	for (UTexture2D* T : Textures)
+	{
+		if (T->GetName().EndsWith(TEXT("_N")))
+		{
+			TestTrue(TEXT("normal settings"), T->CompressionSettings == TC_Normalmap && !T->SRGB);
+		}
+		else if (T->GetName().EndsWith(TEXT("_ORM")))
+		{
+			TestTrue(TEXT("orm settings"), T->CompressionSettings == TC_Masks && !T->SRGB);
+		}
+		else
+		{
+			TestTrue(TEXT("base color srgb"), T->SRGB);
+		}
+		TestTrue(TEXT("in project content"), T->GetPathName().StartsWith(TEXT("/Game/Glaze/Pack/Wood_Planks/1k/")));
+	}
+	UGlazeRecipe* R = NewObject<UGlazeRecipe>();
+	MatchTextures(Textures, *R);
+	TestNotNull(TEXT("bc matched"), R->BaseColor.Get());
+	TestNotNull(TEXT("normal matched"), R->Normal.Get());
+	TestTrue(TEXT("orm -> roughness G"), R->Roughness != nullptr && R->RoughnessChannel == EGlazeChannel::G);
+
+	UTexture2D* Noise = Pack::ImportNoise(Pack::Noises()[0], false);
+	TestTrue(TEXT("noise grayscale"), Noise && Noise->CompressionSettings == TC_Grayscale && !Noise->SRGB);
 	return true;
 }
 

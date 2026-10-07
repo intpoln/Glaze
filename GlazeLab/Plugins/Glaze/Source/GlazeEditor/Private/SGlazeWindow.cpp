@@ -185,7 +185,7 @@ TSharedRef<SGlazeWindow> SGlazeWindow::Open(const FText& Title)
 	return Widget;
 }
 
-void SGlazeWindow::OpenForTextures(const TArray<UTexture2D*>& Textures)
+void SGlazeWindow::OpenForTextures(const TArray<UTexture2D*>& Textures, const FString& OutputFolder)
 {
 	if (Textures.Num() == 0)
 	{
@@ -200,6 +200,7 @@ void SGlazeWindow::OpenForTextures(const TArray<UTexture2D*>& Textures)
 
 	TSharedRef<SGlazeWindow> W = Open(LOCTEXT("TitleCreate", "Glaze: Create Material"));
 	W->Sets = MoveTemp(Sets);
+	W->OutputFolder = OutputFolder;
 	W->CapturePreviewTargets();
 	W->StartSet(0, false);
 }
@@ -252,7 +253,11 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 		}
 	}
 	Recipe->AssetName = TEXT("MI_") + (Match.SetName.IsEmpty() ? Sets[Index].Key : Match.SetName);
-	if (Textures.Num() > 0 && Textures[0])
+	if (!OutputFolder.IsEmpty())
+	{
+		Recipe->Folder.Path = OutputFolder;
+	}
+	else if (Textures.Num() > 0 && Textures[0])
 	{
 		Recipe->Folder.Path = FPackageName::GetLongPackagePath(Textures[0]->GetPackage()->GetName());
 	}

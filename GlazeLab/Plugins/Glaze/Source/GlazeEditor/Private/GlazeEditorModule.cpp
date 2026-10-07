@@ -1,4 +1,8 @@
 #include "ContentBrowserMenuContexts.h"
+#include "ContentBrowserModule.h"
+#include "Editor.h"
+#include "GlazePack.h"
+#include "IContentBrowserSingleton.h"
 #include "Engine/Texture2D.h"
 #include "GlazeApply.h"
 #include "Interfaces/IPluginManager.h"
@@ -41,6 +45,7 @@ private:
 	{
 		FToolMenuOwnerScoped Owner(this);
 		const FSlateIcon Icon("GlazeStyle", "Glaze.Icon");
+		RegisterPackMenu(Icon);
 
 		// Textures: open the window with all selected textures.
 		{
@@ -105,6 +110,62 @@ private:
 					Icon, Action);
 			}));
 		}
+	}
+
+	/** "Add" menu of the Content Browser: materials and noises from the bundled pack. */
+	static void RegisterPackMenu(const FSlateIcon& Icon)
+	{
+		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("ContentBrowser.AddNewContextMenu");
+		FToolMenuSection& Section = Menu->FindOrAddSection("Glaze", LOCTEXT("GlazeSection", "Glaze"));
+
+		auto ResolutionMenu = [](TFunction<void(bool)> Action)
+		{
+			return FNewToolMenuDelegate::CreateLambda([Action](UToolMenu* Sub)
+			{
+				FToolMenuSection& S = Sub->AddSection("Resolution");
+				for (const bool b2k : { true, false })
+				{
+					S.AddMenuEntry(NAME_None, b2k ? LOCTEXT("Res2k", "2K") : LOCTEXT("Res1k", "1K"), FText::GetEmpty(), FSlateIcon(),
+						FUIAction(FExecuteAction::CreateLambda([Action, b2k] { Action(b2k); })));
+				}
+			});
+		};
+
+		Section.AddSubMenu("GlazePackMaterials", LOCTEXT("PackMaterials", "Glaze: Material from Pack"),
+			LOCTEXT("PackMaterialsTip", "Seamless textures bundled with Glaze: imports them into /Game/Glaze/Pack and opens the Glaze window."),
+			FNewToolMenuDelegate::CreateLambda([ResolutionMenu](UToolMenu* Sub)
+			{
+				FToolMenuSection& S = Sub->AddSection("Materials");
+				for (const FString& Name : Glaze::Pack::Materials())
+				{
+					S.AddSubMenu(FName(Name), FText::FromString(Name.Replace(TEXT("_"), TEXT(" "))), FText::GetEmpty(),
+						ResolutionMenu([Name](bool b2k)
+						{
+							const TArray<UTexture2D*> Textures = Glaze::Pack::ImportMaterial(Name, b2k);
+							const FContentBrowserItemPath Current = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser").Get().GetCurrentPath();
+							SGlazeWindow::OpenForTextures(Textures, Current.HasInternalPath() ? Current.GetInternalPathString() : FString(TEXT("/Game")));
+						}));
+				}
+			}), false, Icon);
+
+		Section.AddSubMenu("GlazePackNoises", LOCTEXT("PackNoises", "Glaze: Noise from Pack"),
+			LOCTEXT("PackNoisesTip", "Seamless grayscale noises bundled with Glaze: imports one into /Game/Glaze/Pack/Noises."),
+			FNewToolMenuDelegate::CreateLambda([ResolutionMenu](UToolMenu* Sub)
+			{
+				FToolMenuSection& S = Sub->AddSection("Noises");
+				for (const FString& Name : Glaze::Pack::Noises())
+				{
+					S.AddSubMenu(FName(Name), FText::FromString(Name.RightChop(8)), FText::GetEmpty(),
+						ResolutionMenu([Name](bool b2k)
+						{
+							if (UTexture2D* Noise = Glaze::Pack::ImportNoise(Name, b2k))
+							{
+								TArray<UObject*> Objects = { Noise };
+								GEditor->SyncBrowserToObjects(Objects);
+							}
+						}));
+				}
+			}), false, Icon);
 	}
 
 	TSharedPtr<FSlateStyleSet> Style;
