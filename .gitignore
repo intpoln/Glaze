@@ -3,3 +3,5 @@ Intermediate/
 Binaries/
 DerivedDataCache/
 *.log
+Tools/texgen/ptl/
+TexturePack/raw/
