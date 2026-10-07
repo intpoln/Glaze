@@ -196,7 +196,11 @@ bool FGlazeInstanceTest::RunTest(const FString&)
 	// Same static state: the instance is not touched again.
 	const FString Before = Key;
 	R->LerpAmount = 0.5f;
+	const double Start = FPlatformTime::Seconds();
 	ApplyRecipe(MI, *R, Key);
+	const double Ms = (FPlatformTime::Seconds() - Start) * 1000.0;
+	AddInfo(FString::Printf(TEXT("ApplyRecipe (values only): %.2f ms"), Ms));
+	TestTrue(TEXT("value change is interactive (< 20 ms)"), Ms < 20.0);
 	TestEqual(TEXT("static key unchanged"), Key, Before);
 
 	// Texture fixes plan: ORM -> masks, linear.

@@ -101,17 +101,16 @@ namespace
 		return Uses;
 	}
 
-	void SetTexture(UMaterialInstanceConstant* MI, FName Name, UTexture* Texture)
+	/** Returns true when an override was removed (the render proxy then needs a full update). */
+	bool SetTexture(UMaterialInstanceConstant* MI, FName Name, UTexture* Texture)
 	{
 		if (Texture)
 		{
-			UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(MI, Name, Texture);
+			MI->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(Name), Texture);
+			return false;
 		}
-		else
-		{
-			// No override: the instance must not reference textures it does not sample.
-			MI->TextureParameterValues.RemoveAll([Name](const FTextureParameterValue& V) { return V.ParameterInfo.Name == Name; });
-		}
+		// No override: the instance must not reference textures it does not sample.
+		return MI->TextureParameterValues.RemoveAll([Name](const FTextureParameterValue& V) { return V.ParameterInfo.Name == Name; }) > 0;
 	}
 }
 
@@ -208,8 +207,12 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 {
 	using namespace Param;
 	TArray<TPair<FName, bool>> Switches;
-	auto Scalar = [MI](FName Name, float V) { UMaterialEditingLibrary::SetMaterialInstanceScalarParameterValue(MI, Name, V); };
-	auto Vector = [MI](FName Name, const FLinearColor& V) { UMaterialEditingLibrary::SetMaterialInstanceVectorParameterValue(MI, Name, V); };
+	// The *EditorOnly setters update the render proxy directly. UMaterialEditingLibrary setters run a full
+	// UpdateMaterialInstance per call (seconds for ~60 parameters), so that is done once below, only for static changes.
+	auto Scalar = [MI](FName Name, float V) { MI->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(Name), V); };
+	auto Vector = [MI](FName Name, const FLinearColor& V) { MI->SetVectorParameterValueEditorOnly(FMaterialParameterInfo(Name), V); };
+	bool bRemovedTexture = false;
+	auto SetTexture = [MI, &bRemovedTexture](FName Name, UTexture* Texture) { bRemovedTexture |= Glaze::SetTexture(MI, Name, Texture); };
 
 	// UV
 	Scalar(Tiling, R.Tiling);
@@ -219,7 +222,7 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 
 	// Base color
 	Switches.Add({ UseMap(EGlazeSlot::BaseColor), R.BaseColor != nullptr });
-	SetTexture(MI, Map(EGlazeSlot::BaseColor), R.BaseColor);
+	SetTexture(Map(EGlazeSlot::BaseColor), R.BaseColor);
 	Vector(Tint, R.Tint);
 	Switches.Add({ ColorCorrection, R.bColorCorrection });
 	Scalar(Desaturation, R.Desaturation);
@@ -233,20 +236,20 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 
 	// Normal
 	Switches.Add({ UseMap(EGlazeSlot::Normal), R.Normal != nullptr });
-	SetTexture(MI, Map(EGlazeSlot::Normal), R.Normal);
+	SetTexture(Map(EGlazeSlot::Normal), R.Normal);
 	Scalar(NormalStrength, R.NormalStrength);
 	Scalar(FlipGreen, R.bFlipGreen ? 1.f : 0.f);
 
 	// Grayscale channels
 	UTexture2D* Packed = FindPacked(R);
-	SetTexture(MI, PackedMap, Packed);
+	SetTexture(PackedMap, Packed);
 	for (EGlazeSlot Slot : GrayscaleSlots)
 	{
 		UTexture2D* T = R.GetSlot(Slot);
 		const bool bFromPacked = T && T == Packed;
 		Switches.Add({ UseMap(Slot), T != nullptr });
 		Switches.Add({ FromPacked(Slot), bFromPacked });
-		SetTexture(MI, Map(Slot), bFromPacked ? nullptr : T);
+		SetTexture(Map(Slot), bFromPacked ? nullptr : T);
 		Vector(Channel(Slot), ChannelMask(R.GetChannel(Slot)));
 		const FGlazeRemap& Remap = RemapOf(R, Slot);
 		Scalar(Invert(Slot), Remap.bInvert ? 1.f : 0.f);
@@ -269,7 +272,7 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	// Emissive
 	Switches.Add({ UseEmissive, R.bEmissive });
 	Switches.Add({ UseMap(EGlazeSlot::Emissive), R.bEmissive && R.Emissive != nullptr });
-	SetTexture(MI, Map(EGlazeSlot::Emissive), R.bEmissive ? R.Emissive.Get() : nullptr);
+	SetTexture(Map(EGlazeSlot::Emissive), R.bEmissive ? R.Emissive.Get() : nullptr);
 	Vector(EmissiveColor, R.EmissiveColor);
 	Scalar(EmissiveIntensity, R.EmissiveIntensity);
 
@@ -282,6 +285,10 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	Key += FString::Printf(TEXT("|%d|%d|%.4f"), bMasked ? 1 : 0, R.bTwoSided ? 1 : 0, R.OpacityClip);
 	if (Key == InOutStaticKey)
 	{
+		if (bRemovedTexture)
+		{
+			UMaterialEditingLibrary::UpdateMaterialInstance(MI);
+		}
 		return;
 	}
 	InOutStaticKey = Key;
