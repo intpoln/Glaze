@@ -21,7 +21,7 @@
 | `GlazeLab/` | тестовый проект UE 5.8; плагин в `GlazeLab/Plugins/Glaze` (C++ модуль GlazeEditor) |
 | `GlazeLab/Plugins/Glaze/Resources/Pack` | пак текстур (PNG в Git LFS) + pack.json |
 | `Tools/build.sh`, `Tools/runtests.sh Glaze` | сборка и автотесты |
-| `Tools/package.sh` | упаковка плагина → `Desktop/GlazePackage/Glaze` (копировать в `<Project>/Plugins/Glaze`) |
+| `Tools/package.sh [5.8]` | упаковка плагина → `packages/<версия движка>/Glaze` (копировать в `<Project>/Plugins/Glaze`; папка не в git) |
 | `Tools/texgen/` | генерация пака через Pocket Texture Lab (см. receiver.py, materials.js) |
 | `TexturePack/graphs` | исходные графы PTL для материалов пака |
 | `docs/ROADMAP.md` | план |
