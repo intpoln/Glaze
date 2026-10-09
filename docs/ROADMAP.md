@@ -23,7 +23,8 @@
 ## v2 — детали и WPO
 - [x] Детали на нойзах: UV / World / Local (Object) / **Pre-Skinned** (скелеталки — детали не «плывут»); текстура из пака (triplanar в 3D) или процедурный 3D-нойз; влияют на цвет и roughness
 - [x] Тест Glaze.Compile — реальная компиляция шейдеров всех пермутаций (`Tools/runtests.sh Glaze rhi`)
-- [ ] Detail normal, macro variation, triplanar
+- [x] Detail Bump (рельеф от нойза через производные, без доп. выборок), Macro Variation (крупные пятна яркости/roughness против повторяемости), triplanar для нойза
+- [ ] Triplanar для основных текстур (меши без развёртки)
 - [ ] WPO: ветер/покачивание/нойз (с учётом pre-skinned для скелеталок)
 - [ ] Использование Height
 

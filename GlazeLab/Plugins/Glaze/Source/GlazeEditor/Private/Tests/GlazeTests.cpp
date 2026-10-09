@@ -137,7 +137,7 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	for (const FMaterialParameterInfo& I : Infos) { Names.Add(I.Name); }
 	for (const FName N : TArray<FName>{ Glaze::Param::Tiling, Glaze::Param::Rotation, Glaze::Param::ColorContrast, Glaze::Param::LerpAmount,
 		Glaze::Param::Value(EGlazeSlot::Roughness), Glaze::Param::Max(EGlazeSlot::Roughness), Glaze::Param::OpacityAmount,
-		Glaze::Param::DetailSize, Glaze::Param::DetailRoughness })
+		Glaze::Param::DetailSize, Glaze::Param::DetailRoughness, Glaze::Param::DetailBump, Glaze::Param::MacroSize, Glaze::Param::MacroAmount })
 	{
 		TestTrue(*FString::Printf(TEXT("scalar %s"), *N.ToString()), Names.Contains(N));
 	}
@@ -147,7 +147,7 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	for (const FMaterialParameterInfo& I : Infos) { Names.Add(I.Name); }
 	for (const FName N : TArray<FName>{ Glaze::Param::UseMap(EGlazeSlot::BaseColor), Glaze::Param::ColorCorrection, Glaze::Param::FromPacked(EGlazeSlot::Metallic),
 		Glaze::Param::Dithered, Glaze::Param::UseEmissive, Glaze::Param::EmissiveFromBaseColor,
-		Glaze::Param::UseDetail, Glaze::Param::DetailFromTexture, Glaze::Param::DetailUV, Glaze::Param::DetailLocal, Glaze::Param::DetailPreSkinned })
+		Glaze::Param::UseDetail, Glaze::Param::DetailFromTexture, Glaze::Param::DetailUV, Glaze::Param::DetailLocal, Glaze::Param::DetailPreSkinned, Glaze::Param::UseMacro })
 	{
 		TestTrue(*FString::Printf(TEXT("switch %s"), *N.ToString()), Names.Contains(N));
 	}
@@ -289,6 +289,10 @@ bool FGlazeCompileTest::RunTest(const FString&)
 		{ TEXT("detail local procedural"), [](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailSpace = EGlazeDetailSpace::Local; } },
 		{ TEXT("detail pre-skinned texture"), [Noise](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailNoise = Noise; R.DetailSpace = EGlazeDetailSpace::PreSkinned; } },
 		{ TEXT("detail pre-skinned procedural"), [](UGlazeRecipe& R) { R.bDetailNoise = true; R.DetailSpace = EGlazeDetailSpace::PreSkinned; } },
+		{ TEXT("detail world + bump + macro"), [Noise](UGlazeRecipe& R)
+			{ R.bDetailNoise = true; R.DetailNoise = Noise; R.DetailBump = 1.f; R.bMacroVariation = true; } },
+		{ TEXT("macro only, uv"), [](UGlazeRecipe& R) { R.bMacroVariation = true; R.DetailSpace = EGlazeDetailSpace::UV; } },
+		{ TEXT("macro only, pre-skinned"), [](UGlazeRecipe& R) { R.bMacroVariation = true; R.DetailSpace = EGlazeDetailSpace::PreSkinned; } },
 	};
 	for (const FCase& Case : Cases)
 	{

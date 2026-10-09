@@ -291,13 +291,15 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	Vector(EmissiveColor, R.EmissiveColor);
 	Scalar(EmissiveIntensity, R.EmissiveIntensity);
 
-	// Detail noise
+	// Noise: detail + macro share the space switches
 	const bool bDetail = R.bDetailNoise;
+	const bool bNoise = bDetail || R.bMacroVariation;
 	Switches.Add({ UseDetail, bDetail });
+	Switches.Add({ UseMacro, R.bMacroVariation });
 	Switches.Add({ DetailFromTexture, bDetail && R.DetailNoise != nullptr });
-	Switches.Add({ DetailUV, bDetail && R.DetailSpace == EGlazeDetailSpace::UV });
-	Switches.Add({ DetailLocal, bDetail && R.DetailSpace == EGlazeDetailSpace::Local });
-	Switches.Add({ DetailPreSkinned, bDetail && R.DetailSpace == EGlazeDetailSpace::PreSkinned });
+	Switches.Add({ DetailUV, bNoise && R.DetailSpace == EGlazeDetailSpace::UV });
+	Switches.Add({ DetailLocal, bNoise && R.DetailSpace == EGlazeDetailSpace::Local });
+	Switches.Add({ DetailPreSkinned, bNoise && R.DetailSpace == EGlazeDetailSpace::PreSkinned });
 	SetTexture(DetailMap, bDetail ? R.DetailNoise.Get() : nullptr);
 	Scalar(DetailTiling, R.DetailTiling);
 	Scalar(DetailSize, R.DetailSize);
@@ -306,6 +308,11 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	Vector(DetailColor, R.DetailColor);
 	Scalar(DetailColorAmount, R.DetailColorAmount);
 	Scalar(DetailRoughness, R.DetailRoughness);
+	Scalar(DetailBump, R.DetailBump);
+	Scalar(MacroSize, R.MacroSize);
+	Scalar(MacroTiling, R.MacroTiling);
+	Scalar(MacroAmount, R.MacroAmount);
+	Scalar(MacroRoughness, R.MacroRoughness);
 
 	// Static state: switches + base property overrides. Only a change here needs a recompile.
 	FString Key;

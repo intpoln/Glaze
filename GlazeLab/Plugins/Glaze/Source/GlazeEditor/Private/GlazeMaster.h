@@ -8,7 +8,7 @@ class UMaterial;
 namespace Glaze
 {
 	/** Bump when the master graph changes: older masters in projects are rebuilt in place (instances keep their values). */
-	constexpr int32 MasterVersion = 4;
+	constexpr int32 MasterVersion = 5;
 
 	/** The master lives in the PROJECT (not in the plugin), so instances keep working when Glaze is not installed. */
 	extern const TCHAR* MasterPackagePath; // /Game/Glaze/M_Glaze
@@ -44,6 +44,7 @@ namespace Glaze
 		extern const FName UseOpacity, OpacityAmount, Dithered;
 		extern const FName UseEmissive, EmissiveFromBaseColor, EmissiveColor, EmissiveIntensity;
 		extern const FName UseDetail, DetailFromTexture, DetailUV, DetailLocal, DetailPreSkinned, DetailMap;
-		extern const FName DetailTiling, DetailSize, DetailContrast, DetailBias, DetailColor, DetailColorAmount, DetailRoughness;
+		extern const FName DetailTiling, DetailSize, DetailContrast, DetailBias, DetailColor, DetailColorAmount, DetailRoughness, DetailBump;
+		extern const FName UseMacro, MacroSize, MacroTiling, MacroAmount, MacroRoughness;
 	}
 }

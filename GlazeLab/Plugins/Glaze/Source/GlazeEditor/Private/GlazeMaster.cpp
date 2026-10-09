@@ -14,6 +14,9 @@
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionConstant3Vector.h"
 #include "Materials/MaterialExpressionCosine.h"
+#include "Materials/MaterialExpressionCrossProduct.h"
+#include "Materials/MaterialExpressionDDX.h"
+#include "Materials/MaterialExpressionDDY.h"
 #include "Materials/MaterialExpressionDesaturation.h"
 #include "Materials/MaterialExpressionDivide.h"
 #include "Materials/MaterialExpressionDotProduct.h"
@@ -24,11 +27,13 @@
 #include "Materials/MaterialExpressionMax.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialExpressionNoise.h"
+#include "Materials/MaterialExpressionNormalize.h"
 #include "Materials/MaterialExpressionOneMinus.h"
 #include "Materials/MaterialExpressionPreSkinnedNormal.h"
 #include "Materials/MaterialExpressionPreSkinnedPosition.h"
 #include "Materials/MaterialExpressionSaturate.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionSign.h"
 #include "Materials/MaterialExpressionSine.h"
 #include "Materials/MaterialExpressionStaticSwitchParameter.h"
 #include "Materials/MaterialExpressionSubtract.h"
@@ -79,7 +84,9 @@ namespace Param
 	const FName UseDetail(TEXT("Use Detail Noise")), DetailFromTexture(TEXT("Detail Noise From Texture")), DetailUV(TEXT("Detail In UV Space"));
 	const FName DetailLocal(TEXT("Detail In Local Space")), DetailPreSkinned(TEXT("Detail In Pre-Skinned Space")), DetailMap(TEXT("Detail Noise Map"));
 	const FName DetailTiling(TEXT("Detail Tiling")), DetailSize(TEXT("Detail Size")), DetailContrast(TEXT("Detail Contrast")), DetailBias(TEXT("Detail Bias"));
-	const FName DetailColor(TEXT("Detail Color")), DetailColorAmount(TEXT("Detail Color Amount")), DetailRoughness(TEXT("Detail Roughness"));
+	const FName DetailColor(TEXT("Detail Color")), DetailColorAmount(TEXT("Detail Color Amount")), DetailRoughness(TEXT("Detail Roughness")), DetailBump(TEXT("Detail Bump"));
+	const FName UseMacro(TEXT("Use Macro Variation")), MacroSize(TEXT("Macro Size")), MacroTiling(TEXT("Macro Tiling"));
+	const FName MacroAmount(TEXT("Macro Amount")), MacroRoughness(TEXT("Macro Roughness"));
 }
 
 namespace
@@ -213,6 +220,30 @@ namespace
 		FPin Sub(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionSubtract>(A, B); }
 		FPin Mul(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionMultiply>(A, B); }
 		FPin Div(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionDivide>(A, B); }
+		FPin Cross(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionCrossProduct>(A, B); }
+		template <class T>
+		FPin Unary(const FPin& A, FExpressionInput T::*Input)
+		{
+			auto* E = New<T>();
+			Link(E->*Input, A);
+			return { E };
+		}
+		FPin DDX(const FPin& A) { return Unary(A, &UMaterialExpressionDDX::Value); }
+		FPin DDY(const FPin& A) { return Unary(A, &UMaterialExpressionDDY::Value); }
+		FPin Sign(const FPin& A) { return Unary(A, &UMaterialExpressionSign::Input); }
+		FPin Normalize(const FPin& A) { return Unary(A, &UMaterialExpressionNormalize::VectorInput); }
+		/** Procedural gradient noise in [0, 1]; Position is already scaled. */
+		FPin Noise(const FPin& Position, int32 Levels)
+		{
+			auto* E = New<UMaterialExpressionNoise>();
+			E->Scale = 1.f;
+			E->NoiseFunction = NOISEFUNCTION_GradientTex3D;
+			E->Levels = Levels;
+			E->OutputMin = 0.f;
+			E->OutputMax = 1.f;
+			Link(E->Position, Position);
+			return { E };
+		}
 		FPin Max(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionMax>(A, B); }
 		FPin Dot(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionDotProduct>(A, B); }
 		FPin Append(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionAppendVector>(A, B); }
@@ -356,15 +387,15 @@ void BuildMasterGraph(UMaterial* Material)
 	const FPin OffsetXY = G.Mask(G.Vector(Param::Offset, FLinearColor(0, 0, 0, 0), GroupUV), true, true);
 	const FPin UV = G.Add(G.Mul(Rotated, Tiling), OffsetXY);
 
-	// ---- Detail noise: a grayscale mask in UV / world / object / bind-pose space, applied to color and roughness below ----
-	FPin Detail;
+	// ---- Noise: detail mask and macro patches in UV / world / object / bind-pose space; applied to color, roughness, normal below ----
+	const TCHAR* GroupNoise = TEXT("12 Noise");
+	auto* NormalWS = G.New<UMaterialExpressionVertexNormalWS>();
+	FPin Position, NoiseNormal;
 	{
-		const TCHAR* Group = TEXT("12 Detail Noise");
 		auto* WorldPos = G.New<UMaterialExpressionWorldPosition>();
 		WorldPos->WorldPositionShaderOffset = WPT_ExcludeAllShaderOffsets; // no swimming once WPO is used
 		auto* LocalPos = G.New<UMaterialExpressionLocalPosition>();
 		LocalPos->IncludedOffsets = EPositionIncludedOffsets::ExcludeOffsets;
-		auto* NormalWS = G.New<UMaterialExpressionVertexNormalWS>();
 		auto* NormalLocal = G.New<UMaterialExpressionTransform>();
 		NormalLocal->TransformSourceType = TRANSFORMSOURCE_World;
 		NormalLocal->TransformType = TRANSFORM_Local;
@@ -372,11 +403,14 @@ void BuildMasterGraph(UMaterial* Material)
 		// Pre-skinned data exists only in the vertex shader.
 		const FPin PreSkinnedPos = G.Interpolate({ G.New<UMaterialExpressionPreSkinnedPosition>() });
 		const FPin PreSkinnedNormal = G.Interpolate({ G.New<UMaterialExpressionPreSkinnedNormal>() });
+		Position = G.Switch(Param::DetailPreSkinned, PreSkinnedPos, G.Switch(Param::DetailLocal, { LocalPos }, { WorldPos }, GroupNoise), GroupNoise);
+		NoiseNormal = G.Switch(Param::DetailPreSkinned, PreSkinnedNormal, G.Switch(Param::DetailLocal, { NormalLocal }, { NormalWS }, GroupNoise), GroupNoise);
+	}
 
-		const FPin Position = G.Switch(Param::DetailPreSkinned, PreSkinnedPos, G.Switch(Param::DetailLocal, { LocalPos }, { WorldPos }, Group), Group);
-		const FPin Normal = G.Switch(Param::DetailPreSkinned, PreSkinnedNormal, G.Switch(Param::DetailLocal, { NormalLocal }, { NormalWS }, Group), Group);
-		const FPin P = G.Div(Position, G.Scalar(Param::DetailSize, 200.f, Group, 1.f, 1000.f));
-		const FPin DetailUV = G.Mul({ TexCoord }, G.Scalar(Param::DetailTiling, 2.f, Group, 0.1f, 16.f));
+	FPin Detail;
+	{
+		const FPin P = G.Div(Position, G.Scalar(Param::DetailSize, 200.f, GroupNoise, 1.f, 1000.f));
+		const FPin DetailUV = G.Mul({ TexCoord }, G.Scalar(Param::DetailTiling, 2.f, GroupNoise, 0.1f, 16.f));
 
 		// Texture: one sample in UV space, or triplanar (three samples blended by the normal) in 3D spaces.
 		TArray<UMaterialExpressionTextureSampleParameter2D*> Samples;
@@ -391,7 +425,7 @@ void BuildMasterGraph(UMaterial* Material)
 			return { E, 1 }; // R
 		};
 		const FPin UVSample = Sample(DetailUV);
-		FPin W = G.Abs(Normal);
+		FPin W = G.Abs(NoiseNormal);
 		W = G.Mul(W, W);
 		W = G.Mul(W, W); // sharper blend between the projections
 		W = G.Div(W, G.Dot(W, G.Const3(FLinearColor(1, 1, 1))));
@@ -399,21 +433,24 @@ void BuildMasterGraph(UMaterial* Material)
 		const FPin Y = Sample(G.Mask(P, true, false, true));
 		const FPin Z = Sample(G.Mask(P, true, true));
 		const FPin Triplanar = G.Dot(G.Append(G.Append(X, Y), Z), W);
-		const FPin FromTexture = G.Switch(Param::DetailUV, UVSample, Triplanar, Group);
+		const FPin FromTexture = G.Switch(Param::DetailUV, UVSample, Triplanar, GroupNoise);
 
 		// Procedural: no texture, works the same in every space.
-		auto* Noise = G.New<UMaterialExpressionNoise>();
-		Noise->Scale = 1.f;
-		Noise->NoiseFunction = NOISEFUNCTION_GradientTex3D;
-		Noise->Levels = 4;
-		Noise->OutputMin = 0.f;
-		Noise->OutputMax = 1.f;
-		Link(Noise->Position, G.Switch(Param::DetailUV, G.Append(DetailUV, G.Const(0.f)), P, Group));
+		const FPin Procedural = G.Noise(G.Switch(Param::DetailUV, G.Append(DetailUV, G.Const(0.f)), P, GroupNoise), 4);
 
-		Detail = G.Switch(Param::DetailFromTexture, FromTexture, { Noise }, Group);
+		Detail = G.Switch(Param::DetailFromTexture, FromTexture, Procedural, GroupNoise);
 		const FPin Half = G.Const(0.5f);
-		Detail = G.Saturate(G.Add(G.Add(G.Mul(G.Sub(Detail, Half), G.Scalar(Param::DetailContrast, 1.f, Group, 0.f, 8.f)), Half),
-			G.Scalar(Param::DetailBias, 0.f, Group, -1.f, 1.f)));
+		Detail = G.Saturate(G.Add(G.Add(G.Mul(G.Sub(Detail, Half), G.Scalar(Param::DetailContrast, 1.f, GroupNoise, 0.f, 8.f)), Half),
+			G.Scalar(Param::DetailBias, 0.f, GroupNoise, -1.f, 1.f)));
+	}
+
+	// Macro: large soft patches in [-1, 1], always procedural.
+	FPin Macro;
+	{
+		const FPin MacroUV = G.Append(G.Mul({ TexCoord }, G.Scalar(Param::MacroTiling, 0.25f, GroupNoise, 0.01f, 4.f)), G.Const(0.f));
+		const FPin MacroP = G.Div(Position, G.Scalar(Param::MacroSize, 1000.f, GroupNoise, 50.f, 5000.f));
+		const FPin M = G.Noise(G.Switch(Param::DetailUV, MacroUV, MacroP, GroupNoise), 3);
+		Macro = G.Sub(G.Mul(M, G.Const(2.f)), G.Const(1.f));
 	}
 
 	// ---- Base color ----
@@ -436,10 +473,11 @@ void BuildMasterGraph(UMaterial* Material)
 		Color = G.Switch(Param::ColorCorrection, Lerped, Color, GroupCC);
 	}
 	{
-		const TCHAR* Group = TEXT("12 Detail Noise");
-		const FPin Dirty = G.Lerp(Color, G.Vector(Param::DetailColor, FLinearColor(0.05f, 0.04f, 0.03f), Group),
-			G.Mul(Detail, G.Scalar(Param::DetailColorAmount, 0.3f, Group, 0.f, 1.f)));
-		Color = G.Switch(Param::UseDetail, Dirty, Color, Group);
+		const FPin Dirty = G.Lerp(Color, G.Vector(Param::DetailColor, FLinearColor(0.05f, 0.04f, 0.03f), GroupNoise),
+			G.Mul(Detail, G.Scalar(Param::DetailColorAmount, 0.3f, GroupNoise, 0.f, 1.f)));
+		Color = G.Switch(Param::UseDetail, Dirty, Color, GroupNoise);
+		const FPin Patches = G.Mul(Color, G.Add(G.Const(1.f), G.Mul(Macro, G.Scalar(Param::MacroAmount, 0.3f, GroupNoise, 0.f, 1.f))));
+		Color = G.Switch(Param::UseMacro, Patches, Color, GroupNoise);
 	}
 	Link(Out->BaseColor, G.Mul(Color, G.Vector(Param::Tint, FLinearColor::White, GroupColor)));
 
@@ -456,7 +494,26 @@ void BuildMasterGraph(UMaterial* Material)
 		const FPin RNY = G.Sub(G.Mul(NY, Cos), G.Mul(NX, Sin));
 		const FPin XY = G.Mul(G.Append(RNX, RNY), G.Scalar(Param::NormalStrength, 1.f, GroupNormal, 0.f, 3.f));
 		const FPin Normal = G.Append(XY, G.Mask(N, false, false, true));
-		Link(Out->Normal, G.Switch(Param::UseMap(EGlazeSlot::Normal), Normal, G.Const3(FLinearColor(0, 0, 1)), GroupNormal));
+		const FPin Base = G.Switch(Param::UseMap(EGlazeSlot::Normal), Normal, G.Const3(FLinearColor(0, 0, 1)), GroupNormal);
+
+		// Detail bump from screen-space derivatives of the detail height (works in every noise space, no extra samples).
+		auto* CameraPos = G.New<UMaterialExpressionWorldPosition>();
+		CameraPos->WorldPositionShaderOffset = WPT_CameraRelativeNoOffsets;
+		const FPin Height = G.Mul(Detail, G.Scalar(Param::DetailBump, 0.f, GroupNoise, -5.f, 5.f));
+		const FPin DPdx = G.DDX({ CameraPos });
+		const FPin DPdy = G.DDY({ CameraPos });
+		const FPin R1 = G.Cross(DPdy, { NormalWS });
+		const FPin R2 = G.Cross({ NormalWS }, DPdx);
+		const FPin Det = G.Dot(DPdx, R1);
+		const FPin Grad = G.Mul(G.Sign(Det), G.Add(G.Mul(G.DDX(Height), R1), G.Mul(G.DDY(Height), R2)));
+		auto* BumpTS = G.New<UMaterialExpressionTransform>();
+		BumpTS->TransformSourceType = TRANSFORMSOURCE_World;
+		BumpTS->TransformType = TRANSFORM_Tangent;
+		Link(BumpTS->Input, G.Normalize(G.Sub(G.Mul(G.Abs(Det), { NormalWS }), Grad)));
+		// Whiteout blend with the map normal.
+		const FPin Bumped = G.Normalize(G.Append(G.Add(G.Mask(Base, true, true), G.Mask({ BumpTS }, true, true)),
+			G.Mul(G.Mask(Base, false, false, true), G.Mask({ BumpTS }, false, false, true))));
+		Link(Out->Normal, G.Switch(Param::UseDetail, Bumped, Base, GroupNoise));
 	}
 
 	// ---- Grayscale channels: own map or a channel of the shared packed map, remapped; or a constant ----
@@ -477,10 +534,11 @@ void BuildMasterGraph(UMaterial* Material)
 		return G.Switch(Param::UseMap(Slot), V, NoMap, Group);
 	};
 	{
-		const TCHAR* Group = TEXT("12 Detail Noise");
-		const FPin Roughness = Grayscale(EGlazeSlot::Roughness, G.Scalar(Param::Value(EGlazeSlot::Roughness), 0.5f, GroupOf(EGlazeSlot::Roughness), 0.f, 1.f));
-		const FPin Varied = G.Saturate(G.Add(Roughness, G.Mul(Detail, G.Scalar(Param::DetailRoughness, 0.15f, Group, -1.f, 1.f))));
-		Link(Out->Roughness, G.Switch(Param::UseDetail, Varied, Roughness, Group));
+		FPin Roughness = Grayscale(EGlazeSlot::Roughness, G.Scalar(Param::Value(EGlazeSlot::Roughness), 0.5f, GroupOf(EGlazeSlot::Roughness), 0.f, 1.f));
+		const FPin WithDetail = G.Saturate(G.Add(Roughness, G.Mul(Detail, G.Scalar(Param::DetailRoughness, 0.15f, GroupNoise, -1.f, 1.f))));
+		Roughness = G.Switch(Param::UseDetail, WithDetail, Roughness, GroupNoise);
+		const FPin WithMacro = G.Saturate(G.Add(Roughness, G.Mul(Macro, G.Scalar(Param::MacroRoughness, 0.1f, GroupNoise, 0.f, 1.f))));
+		Link(Out->Roughness, G.Switch(Param::UseMacro, WithMacro, Roughness, GroupNoise));
 	}
 	Link(Out->Metallic, Grayscale(EGlazeSlot::Metallic, G.Scalar(Param::Value(EGlazeSlot::Metallic), 0.f, GroupOf(EGlazeSlot::Metallic), 0.f, 1.f)));
 	Link(Out->Specular, Grayscale(EGlazeSlot::Specular, G.Scalar(Param::Value(EGlazeSlot::Specular), 0.5f, GroupOf(EGlazeSlot::Specular), 0.f, 1.f)));

@@ -244,41 +244,65 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Emissive", meta = (EditCondition = "bEmissive", EditConditionHides, UIMin = "0", UIMax = "50", ClampMin = "0"))
 	float EmissiveIntensity = 1.f;
 
-	// ---- Detail noise: breaks up tiling with grime / variation in color and roughness ----
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Detail Noise"))
+	// ---- Noise: detail (grime / bump) and macro variation break up tiling ----
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Noise"))
 	bool bDetailNoise = false;
 
-	/** Grayscale noise texture (Add → Glaze: Noise from Pack). Empty = procedural 3D noise, no texture needed. */
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Noise Texture", EditCondition = "bDetailNoise", EditConditionHides))
-	TObjectPtr<UTexture2D> DetailNoise;
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Variation"))
+	bool bMacroVariation = false;
 
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Space", EditCondition = "bDetailNoise", EditConditionHides))
+	/** Where both noises are projected. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Space", EditCondition = "bDetailNoise || bMacroVariation", EditConditionHides))
 	EGlazeDetailSpace DetailSpace = EGlazeDetailSpace::World;
 
-	/** Noise repeats per UV tile. */
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Tiling", EditCondition = "bDetailNoise && DetailSpace == EGlazeDetailSpace::UV", EditConditionHides, UIMin = "0.1", UIMax = "16", ClampMin = "0.001"))
+	/** Grayscale noise texture (Add → Glaze: Noise from Pack). Empty = procedural 3D noise, no texture needed. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Texture", EditCondition = "bDetailNoise", EditConditionHides))
+	TObjectPtr<UTexture2D> DetailNoise;
+
+	/** Detail repeats per UV tile. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Tiling", EditCondition = "bDetailNoise && DetailSpace == EGlazeDetailSpace::UV", EditConditionHides, UIMin = "0.1", UIMax = "16", ClampMin = "0.001"))
 	float DetailTiling = 2.f;
 
-	/** Size of one noise tile in centimeters. */
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Size", EditCondition = "bDetailNoise && DetailSpace != EGlazeDetailSpace::UV", EditConditionHides, UIMin = "1", UIMax = "1000", ClampMin = "0.01", Units = "Centimeters"))
+	/** Size of one detail tile in centimeters. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Size", EditCondition = "bDetailNoise && DetailSpace != EGlazeDetailSpace::UV", EditConditionHides, UIMin = "1", UIMax = "1000", ClampMin = "0.01", Units = "Centimeters"))
 	float DetailSize = 200.f;
 
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Contrast", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "0", UIMax = "8", ClampMin = "0"))
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Contrast", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "0", UIMax = "8", ClampMin = "0"))
 	float DetailContrast = 1.f;
 
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Bias", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "-1", UIMax = "1"))
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Bias", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "-1", UIMax = "1"))
 	float DetailBias = 0.f;
 
-	/** Base color is blended towards this color where the noise is bright. */
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Color", EditCondition = "bDetailNoise", EditConditionHides, HideAlphaChannel))
+	/** Base color is blended towards this color where the detail is bright. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Color", EditCondition = "bDetailNoise", EditConditionHides, HideAlphaChannel))
 	FLinearColor DetailColor = FLinearColor(0.05f, 0.04f, 0.03f);
 
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Color Amount", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "0", UIMax = "1"))
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Color Amount", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "0", UIMax = "1"))
 	float DetailColorAmount = 0.3f;
 
-	/** Added to roughness where the noise is bright (negative = shinier). */
-	UPROPERTY(EditAnywhere, Category = "Detail Noise", meta = (DisplayName = "Roughness Amount", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "-1", UIMax = "1"))
+	/** Added to roughness where the detail is bright (negative = shinier). */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Roughness", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "-1", UIMax = "1"))
 	float DetailRoughness = 0.15f;
+
+	/** Bumps from the detail: its height in centimeters (negative = dents). 0 = flat. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Detail Bump", EditCondition = "bDetailNoise", EditConditionHides, UIMin = "-5", UIMax = "5", Units = "Centimeters"))
+	float DetailBump = 0.f;
+
+	/** Size of one macro patch in centimeters. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Size", EditCondition = "bMacroVariation && DetailSpace != EGlazeDetailSpace::UV", EditConditionHides, UIMin = "50", UIMax = "5000", ClampMin = "0.01", Units = "Centimeters"))
+	float MacroSize = 1000.f;
+
+	/** Macro patches per UV tile. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Tiling", EditCondition = "bMacroVariation && DetailSpace == EGlazeDetailSpace::UV", EditConditionHides, UIMin = "0.01", UIMax = "4", ClampMin = "0.001"))
+	float MacroTiling = 0.25f;
+
+	/** Brightness swing of the macro patches: 0.3 = from 70% to 130%. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Amount", EditCondition = "bMacroVariation", EditConditionHides, UIMin = "0", UIMax = "1"))
+	float MacroAmount = 0.3f;
+
+	/** Roughness swing of the macro patches. */
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Roughness", EditCondition = "bMacroVariation", EditConditionHides, UIMin = "0", UIMax = "1"))
+	float MacroRoughness = 0.1f;
 
 	FOnGlazeRecipeChanged OnChanged;
 
