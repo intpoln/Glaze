@@ -4,11 +4,36 @@
 	"Category": "",
 	"Description": "Test project for the Glaze material plugin",
 	"Modules": [
-		{ "Name": "GlazeLab", "Type": "Runtime", "LoadingPhase": "Default" }
+		{
+			"Name": "GlazeLab",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
 	],
 	"Plugins": [
-		{ "Name": "Glaze", "Enabled": true },
-		{ "Name": "PythonScriptPlugin", "Enabled": true },
-		{ "Name": "EditorScriptingUtilities", "Enabled": true }
+		{
+			"Name": "Glaze",
+			"Enabled": true
+		},
+		{
+			"Name": "PythonScriptPlugin",
+			"Enabled": true
+		},
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true
+		},
+		{
+			"Name": "ModelContextProtocol",
+			"Enabled": true
+		},
+		{
+			"Name": "MCPClientToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "VibeUE",
+			"Enabled": true
+		}
 	]
 }
