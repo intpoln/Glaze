@@ -32,6 +32,8 @@ public:
 	static void OpenForInstance(UMaterialInstanceConstant* Instance);
 	/** Closes the window right away (module shutdown): restores meshes and textures. */
 	static void CloseAll();
+	/** The open window, if any. */
+	static TSharedPtr<SGlazeWindow> Get();
 
 	virtual FReply OnKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent) override;
 	virtual FReply OnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent) override;
@@ -42,6 +44,7 @@ public:
 	virtual FString GetReferencerName() const override { return TEXT("SGlazeWindow"); }
 
 private:
+	friend class UGlazeEditorLibrary;
 	static TSharedRef<SGlazeWindow> Open(const FText& Title);
 
 	void StartSet(int32 Index, bool bKeepSettings);

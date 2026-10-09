@@ -121,15 +121,16 @@ private:
 		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("ContentBrowser.AddNewContextMenu");
 		FToolMenuSection& Section = Menu->FindOrAddSection("Glaze", LOCTEXT("GlazeSection", "Glaze"));
 
-		auto ResolutionMenu = [](TFunction<void(bool)> Action)
+		auto ResolutionMenu = [](TFunction<void(int32)> Action)
 		{
 			return FNewToolMenuDelegate::CreateLambda([Action](UToolMenu* Sub)
 			{
 				FToolMenuSection& S = Sub->AddSection("Resolution");
-				for (const bool b2k : { true, false })
+				for (const int32 Size : Glaze::Pack::Sizes)
 				{
-					S.AddMenuEntry(NAME_None, b2k ? LOCTEXT("Res2k", "2K") : LOCTEXT("Res1k", "1K"), FText::GetEmpty(), FSlateIcon(),
-						FUIAction(FExecuteAction::CreateLambda([Action, b2k] { Action(b2k); })));
+					const FText Label = Size >= 1024 ? FText::Format(LOCTEXT("ResK", "{0}K"), Size / 1024) : FText::AsNumber(Size, &FNumberFormattingOptions::DefaultNoGrouping());
+					S.AddMenuEntry(NAME_None, Label, Size < 1024 ? LOCTEXT("ResSmallTip", "Resized from the 1K textures, e.g. for mobile.") : FText::GetEmpty(),
+						FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([Action, Size] { Action(Size); })));
 				}
 			});
 		};
@@ -142,9 +143,9 @@ private:
 				for (const FString& Name : Glaze::Pack::Materials())
 				{
 					S.AddSubMenu(FName(Name), FText::FromString(Name.Replace(TEXT("_"), TEXT(" "))), FText::GetEmpty(),
-						ResolutionMenu([Name](bool b2k)
+						ResolutionMenu([Name](int32 Size)
 						{
-							const TArray<UTexture2D*> Textures = Glaze::Pack::ImportMaterial(Name, b2k);
+							const TArray<UTexture2D*> Textures = Glaze::Pack::ImportMaterial(Name, Size);
 							const FContentBrowserItemPath Current = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser").Get().GetCurrentPath();
 							SGlazeWindow::OpenForTextures(Textures, Current.HasInternalPath() ? Current.GetInternalPathString() : FString(TEXT("/Game")));
 						}));

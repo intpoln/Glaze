@@ -15,6 +15,17 @@ bool UGlazeNoiseSettings::IsIdentity() const
 	return !bInvert && BlackPoint == 0.f && WhitePoint == 1.f && Gamma == 1.f && Contrast == 0.f && Brightness == 0.f;
 }
 
+int32 UGlazeNoiseSettings::Size() const
+{
+	switch (Resolution)
+	{
+	case EGlazeNoiseResolution::R1k:  return 1024;
+	case EGlazeNoiseResolution::R512: return 512;
+	case EGlazeNoiseResolution::R256: return 256;
+	default:                          return 2048;
+	}
+}
+
 void UGlazeNoiseSettings::PostEditChangeProperty(FPropertyChangedEvent& Event)
 {
 	Super::PostEditChangeProperty(Event);
@@ -47,9 +58,9 @@ TArray<uint8> BuildLut(const UGlazeNoiseSettings& S)
 	return Lut;
 }
 
-FString PackFile(const FString& Name, bool b2k)
+FString PackFile(const FString& Name, int32 Size)
 {
-	return Glaze::Pack::SourceDir() / TEXT("Noises") / (b2k ? TEXT("2k") : TEXT("1k")) / Name + TEXT(".png");
+	return Glaze::Pack::SourceDir() / TEXT("Noises") / (Size >= 2048 ? TEXT("2k") : TEXT("1k")) / Name + TEXT(".png");
 }
 
 bool LoadGray(const FString& File, int32 Size, TArray<uint8>& OutPixels, int32& OutSize)
@@ -73,7 +84,7 @@ bool LoadGray(const FString& File, int32 Size, TArray<uint8>& OutPixels, int32& 
 	return OutPixels.Num() == OutSize * OutSize;
 }
 
-UTexture2D* CreateTextureAsset(const TArray<uint8>& Pixels, int32 Size, const FString& PackagePath, FString& OutError)
+UTexture2D* CreateTextureAsset(const TArray<uint8>& Pixels, int32 Size, const FString& PackagePath, FString& OutError, bool bSRGB)
 {
 	if (Pixels.Num() != Size * Size || !FPackageName::IsValidTextForLongPackageName(PackagePath))
 	{
@@ -89,7 +100,7 @@ UTexture2D* CreateTextureAsset(const TArray<uint8>& Pixels, int32 Size, const FS
 	UTexture2D* Texture = NewObject<UTexture2D>(Package, *FPackageName::GetShortName(PackagePath), RF_Public | RF_Standalone | RF_Transactional);
 	Texture->Source.Init(Size, Size, 1, 1, TSF_G8, Pixels.GetData());
 	Texture->CompressionSettings = TC_Grayscale;
-	Texture->SRGB = false;
+	Texture->SRGB = bSRGB;
 	Texture->PostEditChange();
 	Texture->MarkPackageDirty();
 	FAssetRegistryModule::AssetCreated(Texture);

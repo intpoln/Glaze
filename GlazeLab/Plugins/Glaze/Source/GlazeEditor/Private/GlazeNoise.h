@@ -10,8 +10,10 @@ class UTexture2D;
 UENUM()
 enum class EGlazeNoiseResolution : uint8
 {
+	R2k UMETA(DisplayName = "2K (2048)"),
 	R1k UMETA(DisplayName = "1K (1024)"),
-	R2k UMETA(DisplayName = "2K (2048)")
+	R512 UMETA(DisplayName = "512"),
+	R256 UMETA(DisplayName = "256")
 };
 
 /** Settings of the noise window: tone adjustments baked into the created texture. */
@@ -50,6 +52,15 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Output")
 	EGlazeNoiseResolution Resolution = EGlazeNoiseResolution::R2k;
 
+	/**
+	 * Off (default): linear data, as noise masks for materials (Glaze detail noise) expect.
+	 * On: the gray values are treated as sRGB colors. The preview shows how the texture will look either way.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Output", meta = (DisplayName = "sRGB"))
+	bool bSRGB = false;
+
+	int32 Size() const;
+
 	UPROPERTY(EditAnywhere, Category = "Output", meta = (DisplayName = "Name"))
 	FString AssetName;
 
@@ -72,12 +83,12 @@ namespace Glaze::Noise
 	/** Decodes a pack noise PNG as linear 8-bit grayscale; Size > 0 resizes it. False when the file cannot be read. */
 	bool LoadGray(const FString& File, int32 Size, TArray<uint8>& OutPixels, int32& OutSize);
 
-	/** Pack noise file for the resolution. */
-	FString PackFile(const FString& Name, bool b2k);
+	/** Pack noise file to read for a texture size (2K, or 1K for 1K and smaller). */
+	FString PackFile(const FString& Name, int32 Size);
 
 	/**
 	 * Creates and saves a grayscale texture asset (linear, Grayscale compression) at PackagePath from square pixels.
 	 * Null + OutError on failure.
 	 */
-	UTexture2D* CreateTextureAsset(const TArray<uint8>& Pixels, int32 Size, const FString& PackagePath, FString& OutError);
+	UTexture2D* CreateTextureAsset(const TArray<uint8>& Pixels, int32 Size, const FString& PackagePath, FString& OutError, bool bSRGB = false);
 }

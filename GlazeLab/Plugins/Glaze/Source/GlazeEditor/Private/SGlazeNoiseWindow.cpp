@@ -26,6 +26,8 @@
 
 #define LOCTEXT_NAMESPACE "GlazeNoise"
 
+DEFINE_LOG_CATEGORY_STATIC(LogGlazeNoise, Log, All);
+
 namespace
 {
 	TWeakPtr<SGlazeNoiseWindow> GOpenNoiseWindow;
@@ -57,6 +59,7 @@ namespace
 
 	void Notify(const FText& Text, bool bSuccess)
 	{
+		UE_LOG(LogGlazeNoise, Display, TEXT("%s: %s"), bSuccess ? TEXT("OK") : TEXT("FAILED"), *Text.ToString());
 		FNotificationInfo Info(Text);
 		Info.ExpireDuration = 4.f;
 		Info.bUseSuccessFailIcons = true;
@@ -79,7 +82,6 @@ void SGlazeNoiseWindow::Construct(const FArguments& InArgs)
 	Details->SetObject(Settings.Get());
 
 	PreviewBrush.DrawAs = ESlateBrushDrawType::Image;
-	PreviewBrush.Tiling = ESlateBrushTileType::Both;
 	PreviewBrush.ImageSize = FVector2D(PreviewDisplaySize);
 
 	ChildSlot
@@ -91,7 +93,7 @@ void SGlazeNoiseWindow::Construct(const FArguments& InArgs)
 			// Gallery
 			+ SHorizontalBox::Slot().AutoWidth().Padding(6)
 			[
-				SNew(SBox).WidthOverride(3 * (ThumbnailSize + 12) + 18)
+				SNew(SBox).WidthOverride(3 * (ThumbnailSize + 24) + 20)
 				[
 					SNew(SScrollBox)
 					+ SScrollBox::Slot()
@@ -177,7 +179,7 @@ void SGlazeNoiseWindow::Open(const FString& Folder)
 	Widget->Settings->Folder.Path = Folder.IsEmpty() ? FString(TEXT("/Game")) : Folder;
 	TSharedRef<SWindow> NewWindow = SNew(SWindow)
 		.Title(LOCTEXT("Title", "Glaze: Noise from Pack"))
-		.ClientSize(FVector2D(1220, 560))
+		.ClientSize(FVector2D(1260, 600))
 		.SupportsMinimize(false)
 		.SupportsMaximize(false)
 		[
@@ -199,6 +201,11 @@ void SGlazeNoiseWindow::Open(const FString& Folder)
 	}
 	FSlateApplication::Get().SetKeyboardFocus(Widget);
 	GOpenNoiseWindow = Widget;
+}
+
+TSharedPtr<SGlazeNoiseWindow> SGlazeNoiseWindow::Get()
+{
+	return GOpenNoiseWindow.Pin();
 }
 
 void SGlazeNoiseWindow::CloseAll()
@@ -265,7 +272,7 @@ void SGlazeNoiseWindow::LoadThumbnails()
 	TWeakPtr<SGlazeNoiseWindow> Weak = SharedThis(this);
 	for (int32 Index = 0; Index < Items.Num(); ++Index)
 	{
-		const FString File = Glaze::Noise::PackFile(Items[Index]->Name, false);
+		const FString File = Glaze::Noise::PackFile(Items[Index]->Name, 1024);
 		Async(EAsyncExecution::ThreadPool, [Weak, Index, File]
 		{
 			TArray<uint8> Pixels;
@@ -302,7 +309,7 @@ void SGlazeNoiseWindow::Select(int32 Index)
 		Settings->AssetName = Name;
 		Details->ForceRefresh();
 	}
-	if (!Glaze::Noise::LoadGray(Glaze::Noise::PackFile(Name, false), PreviewSize, SourcePixels, SourceSize))
+	if (!Glaze::Noise::LoadGray(Glaze::Noise::PackFile(Name, 1024), PreviewSize, SourcePixels, SourceSize))
 	{
 		SourcePixels.Reset();
 		SourceSize = 0;
@@ -322,15 +329,38 @@ void SGlazeNoiseWindow::OnSettingsChanged(const FPropertyChangedEvent& Event)
 
 void SGlazeNoiseWindow::UpdatePreview()
 {
-	const int32 Tiling = FMath::Clamp(Settings->PreviewTiling, 1, 4);
-	PreviewBrush.ImageSize = FVector2D(PreviewDisplaySize / Tiling);
 	if (SourceSize <= 0)
 	{
 		PreviewBrush.SetResourceObject(nullptr);
 		return;
 	}
-	const TArray<uint8> Lut = Glaze::Noise::BuildLut(*Settings);
-	TArray<uint8> BGRA = ToBGRA(SourcePixels, &Lut);
+	TArray<uint8> Lut = Glaze::Noise::BuildLut(*Settings);
+	if (!Settings->bSRGB)
+	{
+		// Linear data reaches the screen sRGB-encoded: show it as a material would.
+		for (uint8& V : Lut)
+		{
+			V = FLinearColor(V / 255.f, 0.f, 0.f).ToFColor(/*bSRGB*/ true).R;
+		}
+	}
+	// Tiling is drawn into the preview image: N x N copies, each scaled down by N.
+	const int32 Tiling = FMath::Clamp(Settings->PreviewTiling, 1, 4);
+	TArray<uint8> Tiled;
+	const TArray<uint8>* Gray = &SourcePixels;
+	if (Tiling > 1)
+	{
+		Tiled.SetNumUninitialized(SourcePixels.Num());
+		for (int32 Y = 0; Y < SourceSize; ++Y)
+		{
+			const int32 SY = (Y * Tiling) % SourceSize;
+			for (int32 X = 0; X < SourceSize; ++X)
+			{
+				Tiled[Y * SourceSize + X] = SourcePixels[SY * SourceSize + (X * Tiling) % SourceSize];
+			}
+		}
+		Gray = &Tiled;
+	}
+	TArray<uint8> BGRA = ToBGRA(*Gray, &Lut);
 	if (!PreviewTexture || PreviewTexture->GetSizeX() != SourceSize)
 	{
 		PreviewTexture = UTexture2D::CreateTransient(SourceSize, SourceSize, PF_B8G8R8A8, NAME_None, BGRA);
@@ -350,14 +380,15 @@ void SGlazeNoiseWindow::UpdatePreview()
 
 FReply SGlazeNoiseWindow::OnCreate()
 {
+	LastCreated.Reset();
 	if (!Items.IsValidIndex(Selected))
 	{
 		return FReply::Handled();
 	}
-	const bool b2k = Settings->Resolution == EGlazeNoiseResolution::R2k;
+	const int32 TargetSize = Settings->Size();
 	TArray<uint8> Pixels;
 	int32 Size = 0;
-	if (!Glaze::Noise::LoadGray(Glaze::Noise::PackFile(Items[Selected]->Name, b2k), 0, Pixels, Size))
+	if (!Glaze::Noise::LoadGray(Glaze::Noise::PackFile(Items[Selected]->Name, TargetSize), TargetSize, Pixels, Size))
 	{
 		Notify(LOCTEXT("ReadFailed", "Could not read the pack noise file."), false);
 		return FReply::Handled();
@@ -385,7 +416,7 @@ FReply SGlazeNoiseWindow::OnCreate()
 		Path = Package;
 	}
 	FString Error;
-	UTexture2D* Texture = Glaze::Noise::CreateTextureAsset(Pixels, Size, Path, Error);
+	UTexture2D* Texture = Glaze::Noise::CreateTextureAsset(Pixels, Size, Path, Error, Settings->bSRGB);
 	if (!Texture || !Error.IsEmpty())
 	{
 		Notify(FText::FromString(Error), false);
@@ -398,6 +429,7 @@ FReply SGlazeNoiseWindow::OnCreate()
 	{
 		Notify(FText::Format(LOCTEXT("Created", "Created {0}"), FText::FromString(FPackageName::GetShortName(Path))), true);
 	}
+	LastCreated = Texture->GetPathName();
 	if (GEditor)
 	{
 		TArray<UObject*> Objects = { Texture };

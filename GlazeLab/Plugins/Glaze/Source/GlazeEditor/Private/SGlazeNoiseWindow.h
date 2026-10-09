@@ -26,6 +26,7 @@ public:
 	static void Open(const FString& Folder);
 	/** Module shutdown. */
 	static void CloseAll();
+	static TSharedPtr<SGlazeNoiseWindow> Get();
 
 	virtual FReply OnKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent) override;
 	virtual FReply OnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent) override;
@@ -35,6 +36,7 @@ public:
 	virtual FString GetReferencerName() const override { return TEXT("SGlazeNoiseWindow"); }
 
 private:
+	friend class UGlazeEditorLibrary;
 	struct FItem
 	{
 		FString Name;
@@ -54,6 +56,8 @@ private:
 	TArray<TSharedPtr<FItem>> Items;
 	int32 Selected = INDEX_NONE;
 	bool bNameEdited = false;
+	/** Package path of the last created texture (scripting). */
+	FString LastCreated;
 
 	/** The selected noise at preview size, before adjustments. */
 	TArray<uint8> SourcePixels;

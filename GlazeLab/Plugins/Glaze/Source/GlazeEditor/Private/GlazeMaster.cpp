@@ -26,6 +26,7 @@
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionLinearInterpolate.h"
 #include "Materials/MaterialExpressionLocalPosition.h"
+#include "Materials/MaterialExpressionObjectPositionWS.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionMax.h"
 #include "Materials/MaterialExpressionMultiply.h"
@@ -686,7 +687,9 @@ void BuildMasterGraph(UMaterial* Material)
 		const FPin Phase = G.Sub(Along, G.Mul({ G.New<UMaterialExpressionTime>() }, G.Scalar(Param::WindSpeed, 0.5f, Group, 0.f, 4.f)));
 		const FPin Wave = G.Add(G.Mul(G.Sin(Phase, 1.f), G.Const(0.6f)), G.Mul(G.Sin(G.Add(G.Mul(Phase, G.Const(2.3f)), G.Const(0.37f)), 1.f), G.Const(0.4f)));
 		const FPin Push = G.Add(G.Mul(Wave, G.Const(0.5f)), G.Const(0.5f)); // mostly with the wind, a little back
-		FPin ByHeight = G.Saturate(G.Div(G.Mask({ LocalPos }, false, false, true), G.Scalar(Param::WindHeight, 200.f, Group, 10.f, 2000.f)));
+		// Height above the pivot in world centimeters: a mesh scaled up sways by its real height.
+		const FPin Above = G.Sub(G.Mask({ WorldPos }, false, false, true), G.Mask({ G.New<UMaterialExpressionObjectPositionWS>() }, false, false, true));
+		FPin ByHeight = G.Saturate(G.Div(Above, G.Scalar(Param::WindHeight, 200.f, Group, 10.f, 2000.f)));
 		ByHeight = G.Mul(ByHeight, ByHeight); // stiff near the base
 		const FPin Weight = G.Switch(Param::WindByVertexColor, { G.New<UMaterialExpressionVertexColor>(), 1 },
 			G.Switch(Param::WindByHeight, ByHeight, G.Const(1.f), Group), Group);

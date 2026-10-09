@@ -327,7 +327,7 @@ public:
 	float DetailBump = 0.f;
 
 	/** Size of one macro patch in centimeters. */
-	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Size", EditCondition = "bMacroVariation && DetailSpace != EGlazeDetailSpace::UV", EditConditionHides, UIMin = "50", UIMax = "5000", ClampMin = "0.01", Units = "Centimeters"))
+	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Size", EditCondition = "bMacroVariation && DetailSpace != EGlazeDetailSpace::UV", EditConditionHides, UIMin = "1", UIMax = "5000", ClampMin = "0.01", Units = "Centimeters"))
 	float MacroSize = 1000.f;
 
 	/** Macro patches per UV tile. */

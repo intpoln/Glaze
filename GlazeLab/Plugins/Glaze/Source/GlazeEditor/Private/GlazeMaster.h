@@ -8,7 +8,7 @@ class UMaterial;
 namespace Glaze
 {
 	/** Bump when the master graph changes: older masters in projects are rebuilt in place (instances keep their values). */
-	constexpr int32 MasterVersion = 6;
+	constexpr int32 MasterVersion = 7;
 
 	/** The master lives in the PROJECT (not in the plugin), so instances keep working when Glaze is not installed. */
 	extern const TCHAR* MasterPackagePath; // /Game/Glaze/M_Glaze

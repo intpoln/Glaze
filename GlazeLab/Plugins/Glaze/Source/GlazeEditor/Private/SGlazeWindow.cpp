@@ -33,6 +33,8 @@
 
 #define LOCTEXT_NAMESPACE "Glaze"
 
+DEFINE_LOG_CATEGORY_STATIC(LogGlazeWindow, Log, All);
+
 namespace
 {
 	TWeakPtr<SGlazeWindow> GOpenWindow;
@@ -156,6 +158,7 @@ namespace
 
 	void Notify(const FText& Text, bool bSuccess)
 	{
+		UE_LOG(LogGlazeWindow, Display, TEXT("%s: %s"), bSuccess ? TEXT("OK") : TEXT("FAILED"), *Text.ToString());
 		FNotificationInfo Info(Text);
 		Info.ExpireDuration = 4.f;
 		Info.bUseSuccessFailIcons = true;
@@ -310,6 +313,7 @@ void SGlazeWindow::BindEditorEvents()
 			if (FTextureState* State = FixedTextures.Find(Cast<UTexture2D>(Object)))
 			{
 				State->bEditedElsewhere = true;
+				UE_LOG(LogGlazeWindow, Verbose, TEXT("%s modified outside Glaze"), *Object->GetName());
 			}
 		}
 	});
@@ -835,6 +839,12 @@ void SGlazeWindow::Close(bool bImmediate)
 	}
 }
 
+TSharedPtr<SGlazeWindow> SGlazeWindow::Get()
+{
+	TSharedPtr<SGlazeWindow> W = GOpenWindow.Pin();
+	return W && !W->bClosing ? W : nullptr;
+}
+
 void SGlazeWindow::CloseAll()
 {
 	if (TSharedPtr<SGlazeWindow> W = GOpenWindow.Pin())
@@ -908,6 +918,7 @@ void SGlazeWindow::RevertTextureFixes()
 		T->SRGB = S.bSRGB;
 		T->VirtualTextureStreaming = S.bVirtual;
 		T->PostEditChange();
+		UE_LOG(LogGlazeWindow, Verbose, TEXT("Revert %s: was dirty %d, edited elsewhere %d"), *T->GetName(), S.bWasDirty, S.bEditedElsewhere);
 		if (!S.bWasDirty && !S.bEditedElsewhere)
 		{
 			T->GetPackage()->SetDirtyFlag(false);

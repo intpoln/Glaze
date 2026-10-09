@@ -6,6 +6,8 @@
 #include "Engine/Texture2D.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
+#include "ImageCore.h"
+#include "ImageUtils.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "Framework/Application/SlateApplication.h"
@@ -53,7 +55,30 @@ namespace
 		return Cached;
 	}
 
-	const TCHAR* Res(bool b2k) { return b2k ? TEXT("2k") : TEXT("1k"); }
+	/** Content subfolder for a size: 2k, 1k, 512, 256. */
+	FString Res(int32 Size) { return Size >= 2048 ? TEXT("2k") : Size == 1024 ? TEXT("1k") : FString::FromInt(Size); }
+	/** The pack ships 2K and 1K files; smaller sizes are made from the 1K ones. */
+	const TCHAR* SourceRes(int32 Size) { return Size >= 2048 ? TEXT("2k") : TEXT("1k"); }
+
+	/** A copy of File resized to Size (under Saved/Glaze/Resized) for import; File itself when it is not larger. */
+	FString ResizedFile(const FString& File, int32 Size)
+	{
+		FImage Image;
+		if (Size <= 0 || !FImageUtils::LoadImage(*File, Image) || Image.SizeX <= Size)
+		{
+			return File;
+		}
+		FImage Resized;
+		Image.ResizeTo(Resized, Size, FMath::Max(1, Image.SizeY * Size / Image.SizeX), Image.Format, Image.GammaSpace);
+		const FString Out = FPaths::ProjectSavedDir() / TEXT("Glaze/Resized") / FString::FromInt(Size) / FPaths::GetCleanFilename(File);
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(Out), true);
+		if (!FImageUtils::SaveImageByExtension(*Out, Resized))
+		{
+			UE_LOG(LogGlazePack, Error, TEXT("Could not write the resized copy %s"), *Out);
+			return FString();
+		}
+		return Out;
+	}
 
 	/** Texture settings by file suffix: normals, packed data and noises are linear. */
 	void FixSettings(UTexture2D* Texture)
@@ -108,8 +133,8 @@ namespace
 		return true;
 	}
 
-	/** Loads Folder/AssetName or imports File there. Returns null on failure (import or save). */
-	UTexture2D* ImportOne(const FString& File, const FString& Folder)
+	/** Loads Folder/AssetName or imports File (resized to Size when larger) there. Returns null on failure (import or save). */
+	UTexture2D* ImportOne(const FString& File, const FString& Folder, int32 Size)
 	{
 		const FString AssetName = FPaths::GetBaseFilename(File);
 		const FString ObjectPath = Folder / AssetName + TEXT(".") + AssetName;
@@ -123,8 +148,13 @@ namespace
 			return Existing;
 		}
 
+		const FString ImportFile = ResizedFile(File, Size);
+		if (ImportFile.IsEmpty())
+		{
+			return nullptr;
+		}
 		UAssetImportTask* Task = NewObject<UAssetImportTask>();
-		Task->Filename = File;
+		Task->Filename = ImportFile;
 		Task->DestinationPath = Folder;
 		Task->DestinationName = AssetName;
 		Task->bAutomated = true;
@@ -160,23 +190,23 @@ FString SourceDir()
 const TArray<FString>& Materials() { return Manifest().Materials; }
 const TArray<FString>& Noises() { return Manifest().Noises; }
 
-FString ContentFolder(const FString& Name, bool b2k)
+FString ContentFolder(const FString& Name, int32 Size)
 {
-	return FString(ContentRoot) / Name / Res(b2k);
+	return FString(ContentRoot) / Name / Res(Size);
 }
 
-TArray<UTexture2D*> ImportMaterial(const FString& Name, bool b2k, TArray<FString>* OutFailed)
+TArray<UTexture2D*> ImportMaterial(const FString& Name, int32 Size, TArray<FString>* OutFailed)
 {
 	TArray<UTexture2D*> Result;
 	TArray<FString> Files;
-	const FString Dir = SourceDir() / Name / Res(b2k);
+	const FString Dir = SourceDir() / Name / SourceRes(Size);
 	IFileManager::Get().FindFiles(Files, *(Dir / TEXT("*.png")), true, false);
 	Files.Sort();
 	TArray<FString> Failed;
 	if (Files.IsEmpty())
 	{
 		UE_LOG(LogGlazePack, Error, TEXT("No textures found for pack material %s in %s"), *Name, *Dir);
-		Failed.Add(FString(Res(b2k)) + TEXT("/*.png"));
+		Failed.Add(FString(SourceRes(Size)) + TEXT("/*.png"));
 	}
 	else
 	{
@@ -195,7 +225,7 @@ TArray<UTexture2D*> ImportMaterial(const FString& Name, bool b2k, TArray<FString
 	}
 	for (const FString& File : Files)
 	{
-		if (UTexture2D* Texture = ImportOne(Dir / File, ContentFolder(Name, b2k)))
+		if (UTexture2D* Texture = ImportOne(Dir / File, ContentFolder(Name, Size), Size))
 		{
 			Result.Add(Texture);
 		}
@@ -207,7 +237,7 @@ TArray<UTexture2D*> ImportMaterial(const FString& Name, bool b2k, TArray<FString
 	if (!Failed.IsEmpty())
 	{
 		const FString List = FString::Join(Failed, TEXT(", "));
-		UE_LOG(LogGlazePack, Error, TEXT("Pack material %s (%s) is incomplete, failed: %s"), *Name, Res(b2k), *List);
+		UE_LOG(LogGlazePack, Error, TEXT("Pack material %s (%s) is incomplete, failed: %s"), *Name, *Res(Size), *List);
 		Notify(FString::Printf(TEXT("Glaze: pack material %s is incomplete. Not imported: %s"), *Name, *List));
 	}
 	if (OutFailed)
@@ -217,15 +247,15 @@ TArray<UTexture2D*> ImportMaterial(const FString& Name, bool b2k, TArray<FString
 	return Result;
 }
 
-UTexture2D* ImportNoise(const FString& Name, bool b2k)
+UTexture2D* ImportNoise(const FString& Name, int32 Size)
 {
-	const FString File = SourceDir() / TEXT("Noises") / Res(b2k) / Name + TEXT(".png");
+	const FString File = SourceDir() / TEXT("Noises") / SourceRes(Size) / Name + TEXT(".png");
 	if (!FPaths::FileExists(File))
 	{
 		UE_LOG(LogGlazePack, Error, TEXT("Pack noise file not found: %s"), *File);
 		return nullptr;
 	}
-	UTexture2D* Noise = ImportOne(File, FString(ContentRoot) / TEXT("Noises") / Res(b2k));
+	UTexture2D* Noise = ImportOne(File, FString(ContentRoot) / TEXT("Noises") / Res(Size), Size);
 	if (!Noise)
 	{
 		Notify(FString::Printf(TEXT("Glaze: could not import noise %s"), *Name));

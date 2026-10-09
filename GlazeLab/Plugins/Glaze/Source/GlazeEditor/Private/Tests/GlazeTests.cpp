@@ -461,9 +461,9 @@ bool FGlazeCompileTest::RunTest(const FString&)
 	BuildMasterGraph(Material);
 	Material->PostEditChange();
 
-	UTexture2D* Noise = Pack::Noises().Num() > 0 ? Pack::ImportNoise(Pack::Noises()[0], false) : nullptr;
+	UTexture2D* Noise = Pack::Noises().Num() > 0 ? Pack::ImportNoise(Pack::Noises()[0], 1024) : nullptr;
 	TestNotNull(TEXT("pack noise"), Noise);
-	const TArray<UTexture2D*> Wood = Pack::ImportMaterial(TEXT("Wood_Planks"), false);
+	const TArray<UTexture2D*> Wood = Pack::ImportMaterial(TEXT("Wood_Planks"), 1024);
 
 	struct FCase { const TCHAR* Name; TFunction<void(UGlazeRecipe&)> Setup; };
 	const TArray<FCase> Cases = {
@@ -541,7 +541,7 @@ bool FGlazePackTest::RunTest(const FString&)
 	TestTrue(TEXT("wood planks listed"), Pack::Materials().Contains(TEXT("Wood_Planks")));
 
 	// Imports into the lab project's /Game/Glaze/Pack (reused on later runs).
-	const TArray<UTexture2D*> Textures = Pack::ImportMaterial(TEXT("Wood_Planks"), false);
+	const TArray<UTexture2D*> Textures = Pack::ImportMaterial(TEXT("Wood_Planks"), 1024);
 	TestEqual(TEXT("three maps"), Textures.Num(), 3);
 	for (UTexture2D* T : Textures)
 	{
@@ -565,12 +565,12 @@ bool FGlazePackTest::RunTest(const FString&)
 	TestNotNull(TEXT("normal matched"), R->Normal.Get());
 	TestTrue(TEXT("orm -> roughness G"), R->Roughness != nullptr && R->RoughnessChannel == EGlazeChannel::G);
 
-	UTexture2D* Noise = Pack::ImportNoise(Pack::Noises()[0], false);
+	UTexture2D* Noise = Pack::ImportNoise(Pack::Noises()[0], 1024);
 	TestTrue(TEXT("noise grayscale"), Noise && Noise->CompressionSettings == TC_Grayscale && !Noise->SRGB);
 
 	// A complete import reports no failures and every map is written to disk.
 	TArray<FString> Failed = { TEXT("stale") };
-	const TArray<UTexture2D*> Again = Pack::ImportMaterial(TEXT("Wood_Planks"), false, &Failed);
+	const TArray<UTexture2D*> Again = Pack::ImportMaterial(TEXT("Wood_Planks"), 1024, &Failed);
 	TestEqual(TEXT("reimport count"), Again.Num(), 3);
 	TestEqual(TEXT("no failed files"), Failed.Num(), 0);
 	for (UTexture2D* T : Again)
@@ -582,12 +582,12 @@ bool FGlazePackTest::RunTest(const FString&)
 	AddExpectedError(TEXT("No textures found for pack material"), EAutomationExpectedErrorFlags::Contains, 1);
 	AddExpectedError(TEXT("is incomplete"), EAutomationExpectedErrorFlags::Contains, 1);
 	Failed.Reset();
-	const TArray<UTexture2D*> None = Pack::ImportMaterial(TEXT("Glaze_No_Such_Material"), false, &Failed);
+	const TArray<UTexture2D*> None = Pack::ImportMaterial(TEXT("Glaze_No_Such_Material"), 1024, &Failed);
 	TestEqual(TEXT("missing material imports nothing"), None.Num(), 0);
 	TestTrue(TEXT("missing material is reported"), Failed.Num() > 0);
 
 	AddExpectedError(TEXT("Pack noise file not found"), EAutomationExpectedErrorFlags::Contains, 1);
-	TestNull(TEXT("missing noise"), Pack::ImportNoise(TEXT("T_Noise_Glaze_No_Such"), false));
+	TestNull(TEXT("missing noise"), Pack::ImportNoise(TEXT("T_Noise_Glaze_No_Such"), 1024));
 	return true;
 }
 
@@ -620,11 +620,11 @@ bool FGlazeNoiseTest::RunTest(const FString&)
 	// Pack noise decoding: resized grayscale.
 	TArray<uint8> Pixels;
 	int32 Size = 0;
-	TestTrue(TEXT("decode thumbnail"), Noise::LoadGray(Noise::PackFile(Pack::Noises()[0], false), 96, Pixels, Size));
+	TestTrue(TEXT("decode thumbnail"), Noise::LoadGray(Noise::PackFile(Pack::Noises()[0], 1024), 96, Pixels, Size));
 	TestEqual(TEXT("thumbnail size"), Size, 96);
 	TestEqual(TEXT("one byte per pixel"), Pixels.Num(), 96 * 96);
-	TestTrue(TEXT("full size"), Noise::LoadGray(Noise::PackFile(Pack::Noises()[0], false), 0, Pixels, Size) && Size == 1024);
-	TestFalse(TEXT("missing file"), Noise::LoadGray(Noise::PackFile(TEXT("T_Noise_Glaze_No_Such"), false), 0, Pixels, Size));
+	TestTrue(TEXT("full size"), Noise::LoadGray(Noise::PackFile(Pack::Noises()[0], 1024), 0, Pixels, Size) && Size == 1024);
+	TestFalse(TEXT("missing file"), Noise::LoadGray(Noise::PackFile(TEXT("T_Noise_Glaze_No_Such"), 1024), 0, Pixels, Size));
 
 	// Baked asset: linear grayscale, refuses to overwrite.
 	TArray<uint8> Small;
