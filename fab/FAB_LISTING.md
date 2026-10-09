@@ -78,7 +78,7 @@ Turn any texture set into a ready Material Instance in one window: auto map matc
 
 Обе сборки сделаны через `RunUAT BuildPlugin` без ошибок и предупреждений (`Tools/package.sh 5.7` / `5.8`). Пакет 5.7 дополнительно проверен в чистом проекте UE 5.7: все 7 автотестов Glaze прошли, включая компиляцию шейдеров на GPU.
 
-Собранные плагины (`packages/5.7/Glaze`, `packages/5.8/Glaze`) лежат в git. Zip для Fab больше 100 МБ, поэтому они не в git, а в релизе GitHub: https://github.com/intpoln/Glaze/releases/tag/v0.1.0 (локально — `packages/*.zip`). После пересборки загрузить новые zip в новый релиз: `gh release create vX.Y.Z packages/Glaze_5.7_source.zip packages/Glaze_5.8_source.zip`.
+Собранные плагины (`packages/5.7/Glaze`, `packages/5.8/Glaze`) лежат в git. Zip для Fab больше 100 МБ, поэтому они не в git, а в релизе GitHub: https://github.com/intpoln/Glaze/releases/tag/v1.0.0 (локально — `packages/*.zip`). После пересборки заменить zip в релизе: `gh release upload v1.0.0 --clobber packages/Glaze_5.7_source.zip packages/Glaze_5.8_source.zip`.
 
 ### Картинки (1920×1080, PNG)
 
@@ -97,11 +97,10 @@ Turn any texture set into a ready Material Instance in one window: auto map matc
 
 ## Что сделать/проверить перед отправкой
 
-1. **`.uplugin`** (`GlazeLab/Plugins/Glaze/Glaze.uplugin`, его копии в обоих zip):
-   - Сейчас `"VersionName": "0.1.0"` и `"IsBetaVersion": true`. Для релиза — поставить `1.0.0` / `false`, если Никита согласен.
-   - Fab требует заполнить `"FabURL"` ссылкой на листинг (появится после создания черновика). `CreatedByURL`, `DocsURL` и `SupportURL` тоже пустые: вписать туда страницу/почту поддержки.
-   - После правки пересобрать: `bash Tools/package.sh 5.7`, `bash Tools/package.sh 5.8`. Затем пересоздать zip (код ниже).
-2. **Документация.** Fab просит ссылку на документацию. Подойдёт этот файл без раздела «Где лежат файлы» либо README на GitHub/PocketTextureLab.
+1. **`.uplugin`** (`GlazeLab/Plugins/Glaze/Glaze.uplugin`):
+   - Готово: версия `1.0.0`, Beta снята, заполнены `CreatedByURL` / `DocsURL` (README) / `SupportURL` (Issues), модуль только Win64. Пакеты и zip пересобраны, релиз v1.0.0.
+   - **Осталось:** вписать `"FabURL"` (ссылка на листинг появится после создания черновика). Затем пересобрать пакеты (`bash Tools/package.sh 5.7` и `5.8`), пересоздать zip (код ниже), закоммитить и обновить файлы релиза: `gh release upload v1.0.0 packages/Glaze_5.7_source.zip packages/Glaze_5.8_source.zip --clobber`.
+2. **Документация.** README на GitHub: https://github.com/intpoln/Glaze#readme (репозиторий сейчас приватный: перед отправкой его нужно открыть, иначе ссылки DocsURL/SupportURL не работают; решает Никита).
 3. **Видео.** Не делаем, только картинки (решение Никиты).
 4. **Лицензия текстур.** Текстуры пака свои (PocketTextureLab), сторонних ассетов в плагине нет.
 
