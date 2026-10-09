@@ -8,6 +8,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Modules/ModuleManager.h"
+#include "SGlazeNoiseWindow.h"
 #include "SGlazeWindow.h"
 #include "Styling/SlateStyle.h"
 #include "Styling/SlateStyleRegistry.h"
@@ -32,6 +33,7 @@ public:
 	virtual void ShutdownModule() override
 	{
 		SGlazeWindow::CloseAll(); // its widgets and GC hooks run code from this module
+		SGlazeNoiseWindow::CloseAll();
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
 		if (Style)
@@ -149,24 +151,13 @@ private:
 				}
 			}), false, Icon);
 
-		Section.AddSubMenu("GlazePackNoises", LOCTEXT("PackNoises", "Glaze: Noise from Pack"),
-			LOCTEXT("PackNoisesTip", "Seamless grayscale noises bundled with Glaze: imports one into /Game/Glaze/Pack/Noises."),
-			FNewToolMenuDelegate::CreateLambda([ResolutionMenu](UToolMenu* Sub)
+		Section.AddMenuEntry("GlazePackNoises", LOCTEXT("PackNoises", "Glaze: Noise from Pack"),
+			LOCTEXT("PackNoisesTip", "Seamless grayscale noises bundled with Glaze: pick one, adjust it with a live preview and create a texture."),
+			Icon, FUIAction(FExecuteAction::CreateLambda([]
 			{
-				FToolMenuSection& S = Sub->AddSection("Noises");
-				for (const FString& Name : Glaze::Pack::Noises())
-				{
-					S.AddSubMenu(FName(Name), FText::FromString(Name.RightChop(8)), FText::GetEmpty(),
-						ResolutionMenu([Name](bool b2k)
-						{
-							if (UTexture2D* Noise = Glaze::Pack::ImportNoise(Name, b2k))
-							{
-								TArray<UObject*> Objects = { Noise };
-								GEditor->SyncBrowserToObjects(Objects);
-							}
-						}));
-				}
-			}), false, Icon);
+				const FContentBrowserItemPath Current = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser").Get().GetCurrentPath();
+				SGlazeNoiseWindow::Open(Current.HasInternalPath() ? Current.GetInternalPathString() : FString(TEXT("/Game")));
+			})));
 	}
 
 	TSharedPtr<FSlateStyleSet> Style;

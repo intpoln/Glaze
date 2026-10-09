@@ -17,7 +17,7 @@
 7. **Masked + Dithered.** Blend Mode Masked, Opacity Amount, Dithered.
 8. **Свои текстуры.** Выдели набор текстур (BaseColor/Normal/ORM или Roughness/AO) → ПКМ → Glaze: Create Material. Несколько наборов сразу → Create & Next / Skip / Create All.
 9. **Edit with Glaze.** ПКМ по созданному инстансу → Edit with Glaze → настройки вернулись.
-10. **Нойз.** Add → Glaze: Noise from Pack → любой → импортируется в `/Game/Glaze/Pack/Noises`.
+10. **Нойз.** ПКМ по пустому месту в Content Browser → Glaze: Noise from Pack (теперь окно, см. пункт 31).
 11. **Горячие клавиши окна.** Ctrl+Enter — создать, Esc — отмена.
 
 ## v2: детали на нойзах (2026-10-08)
@@ -44,3 +44,6 @@
 28. **Undo после Cancel.** Выдели куб с материалом A → открой Glaze → в Details сдвинь куб (Location) → Cancel → Ctrl+Z. Куб вернулся на место и остался с материалом A (раньше возвращался временный превью-материал). Ctrl+Z внутри окна откатывает правки параметров.
 29. **Cancel не прячет твои правки текстуры.** Normal с неправильной компрессией → Glaze её исправил → открой текстуру и поменяй, например, Maximum Texture Size, не сохраняй → Cancel в Glaze. Текстура осталась помеченной как несохранённая (звёздочка).
 30. **Opacity/Emissive перетаскиванием.** В набор без Opacity перетащи маску в слот Opacity: включается Masked, превью без ошибок сэмплера. В батче следующий набор без Opacity снова Opaque (если Masked включил Glaze, а не ты).
+
+## Окно нойзов (2026-10-10)
+31. **Glaze: Noise from Pack.** ПКМ по пустому месту в папке Content Browser → Glaze: Noise from Pack. Слева галерея из 21 нойза (миниатюры появляются за секунду), клик — большое превью. Покрути Invert, Black/White Point, Gamma, Contrast (1 = чёрно-белая маска), Brightness — превью меняется сразу, без подвисаний на слайдере. Preview Tiling 2–4 — видно, что нойз бесшовный. Create Texture (или Ctrl+Enter): текстура появляется в текущей папке, Grayscale, без sRGB; второй раз то же имя — получит номер. Esc — закрыть.

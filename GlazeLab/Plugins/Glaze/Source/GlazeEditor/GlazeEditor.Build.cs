@@ -10,7 +10,7 @@ public class GlazeEditor : ModuleRules
 		{
 			"UnrealEd", "MaterialEditor", "AssetTools", "AssetRegistry", "ContentBrowser", "ContentBrowserData",
 			"ToolMenus", "Slate", "SlateCore", "InputCore", "PropertyEditor", "EditorFramework",
-			"Json", "JsonUtilities", "Projects", "RHI"
+			"Json", "JsonUtilities", "Projects", "RHI", "ImageCore"
 		});
 	}
 }

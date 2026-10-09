@@ -2,6 +2,7 @@
 #include "GlazeApply.h"
 #include "GlazeMaster.h"
 #include "GlazeMatcher.h"
+#include "GlazeNoise.h"
 #include "GlazePack.h"
 #include "GlazeRecipe.h"
 #include "Dom/JsonObject.h"
@@ -587,6 +588,59 @@ bool FGlazePackTest::RunTest(const FString&)
 
 	AddExpectedError(TEXT("Pack noise file not found"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestNull(TEXT("missing noise"), Pack::ImportNoise(TEXT("T_Noise_Glaze_No_Such"), false));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGlazeNoiseTest, "Glaze.Noise", GlazeTestFlags)
+bool FGlazeNoiseTest::RunTest(const FString&)
+{
+	using namespace Glaze;
+	UGlazeNoiseSettings* S = NewObject<UGlazeNoiseSettings>();
+	TestTrue(TEXT("defaults are identity"), S->IsIdentity());
+	TArray<uint8> Lut = Noise::BuildLut(*S);
+	TestTrue(TEXT("identity lut"), Lut[0] == 0 && Lut[128] == 128 && Lut[255] == 255);
+	S->bInvert = true;
+	Lut = Noise::BuildLut(*S);
+	TestTrue(TEXT("invert"), Lut[0] == 255 && Lut[255] == 0);
+	S->bInvert = false;
+	S->BlackPoint = 0.25f;
+	S->WhitePoint = 0.75f;
+	Lut = Noise::BuildLut(*S);
+	TestTrue(TEXT("levels clip"), Lut[50] == 0 && Lut[200] == 255 && FMath::Abs(Lut[128] - 128) <= 2);
+	S->BlackPoint = 0.f;
+	S->WhitePoint = 1.f;
+	S->Contrast = 1.f;
+	Lut = Noise::BuildLut(*S);
+	TestTrue(TEXT("full contrast is a mask"), Lut[100] == 0 && Lut[156] == 255);
+	S->Contrast = 0.f;
+	S->Gamma = 2.f;
+	Lut = Noise::BuildLut(*S);
+	TestTrue(TEXT("gamma above 1 brightens"), Lut[64] > 100);
+
+	// Pack noise decoding: resized grayscale.
+	TArray<uint8> Pixels;
+	int32 Size = 0;
+	TestTrue(TEXT("decode thumbnail"), Noise::LoadGray(Noise::PackFile(Pack::Noises()[0], false), 96, Pixels, Size));
+	TestEqual(TEXT("thumbnail size"), Size, 96);
+	TestEqual(TEXT("one byte per pixel"), Pixels.Num(), 96 * 96);
+	TestTrue(TEXT("full size"), Noise::LoadGray(Noise::PackFile(Pack::Noises()[0], false), 0, Pixels, Size) && Size == 1024);
+	TestFalse(TEXT("missing file"), Noise::LoadGray(Noise::PackFile(TEXT("T_Noise_Glaze_No_Such"), false), 0, Pixels, Size));
+
+	// Baked asset: linear grayscale, refuses to overwrite.
+	TArray<uint8> Small;
+	Small.Init(77, 64 * 64);
+	const FString Path = FString::Printf(TEXT("/Temp/GlazeTest_%s/T_Noise_Test"), *FGuid::NewGuid().ToString());
+	FString Error;
+	UTexture2D* T = Noise::CreateTextureAsset(Small, 64, Path, Error);
+	TestNotNull(*FString::Printf(TEXT("texture created (%s)"), *Error), T);
+	if (T)
+	{
+		TestTrue(TEXT("grayscale linear"), T->CompressionSettings == TC_Grayscale && !T->SRGB);
+		TestTrue(TEXT("G8 source"), T->Source.GetFormat() == TSF_G8 && T->Source.GetSizeX() == 64);
+	}
+	Error.Reset();
+	TestNull(TEXT("no overwrite"), Noise::CreateTextureAsset(Small, 64, Path, Error));
+	TestFalse(TEXT("overwrite reported"), Error.IsEmpty());
 	return true;
 }
 
