@@ -2,6 +2,7 @@
 
 #include "Components/MeshComponent.h"
 #include "Editor.h"
+#include "EditorUndoClient.h"
 #include "Engine/Selection.h"
 #include "Engine/Texture2D.h"
 #include "Framework/Application/SlateApplication.h"
@@ -36,6 +37,123 @@ namespace
 {
 	TWeakPtr<SGlazeWindow> GOpenWindow;
 
+	UGlazeRecipe* NewRecipe(UGlazeRecipe* CopyFrom = nullptr)
+	{
+		// Transactional: recipe edits are undoable. A new object per texture set, so an undo never brings back
+		// the previous set's textures and name.
+		UGlazeRecipe* R = CopyFrom ? DuplicateObject(CopyFrom, GetTransientPackage()) : NewObject<UGlazeRecipe>(GetTransientPackage());
+		R->SetFlags(RF_Transactional);
+		return R;
+	}
+
+	bool IsPreviewInstance(const UMaterialInterface* M)
+	{
+		return M && M->GetOuter() == GetTransientPackage() && M->GetName().StartsWith(TEXT("GlazePreview"));
+	}
+
+	/** Puts back Originals in the slots showing Preview; drops slots that only the preview added (empty override list). */
+	void RestoreSlots(UMeshComponent* Component, const UMaterialInterface* Preview, const TArray<TObjectPtr<UMaterialInterface>>& Originals)
+	{
+		for (int32 I = 0; I < Component->OverrideMaterials.Num(); ++I)
+		{
+			if (Component->OverrideMaterials[I] == Preview)
+			{
+				Component->SetMaterial(I, Originals.IsValidIndex(I) ? Originals[I].Get() : nullptr);
+			}
+		}
+		int32 Num = Component->OverrideMaterials.Num();
+		while (Num > Originals.Num() && !Component->OverrideMaterials[Num - 1])
+		{
+			--Num;
+		}
+		if (Num != Component->OverrideMaterials.Num())
+		{
+			Component->OverrideMaterials.SetNum(Num);
+			Component->MarkRenderStateDirty();
+		}
+	}
+}
+
+/**
+ * Any transaction on a previewed component (a move, a property edit) records the preview material in its snapshot,
+ * so an undo can bring it back after the window is closed. This puts the original materials back after every undo/redo.
+ */
+class FGlazePreviewGuard : public FEditorUndoClient, public FGCObject
+{
+public:
+	FGlazePreviewGuard()
+	{
+		if (GEditor)
+		{
+			GEditor->RegisterForUndo(this);
+		}
+	}
+	virtual ~FGlazePreviewGuard() override
+	{
+		if (GEditor)
+		{
+			GEditor->UnregisterForUndo(this);
+		}
+	}
+
+	void Remember(UMaterialInterface* Preview, UMeshComponent* Component, const TArray<TObjectPtr<UMaterialInterface>>& Originals)
+	{
+		for (const FRecord& R : Records)
+		{
+			if (R.Preview == Preview && R.Component == Component)
+			{
+				return;
+			}
+		}
+		Records.Add({ Preview, Component, Originals });
+	}
+
+	virtual void PostUndo(bool bSuccess) override { Fix(); }
+	virtual void PostRedo(bool bSuccess) override { Fix(); }
+
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override
+	{
+		for (FRecord& R : Records)
+		{
+			Collector.AddReferencedObjects(R.Originals);
+		}
+	}
+	virtual FString GetReferencerName() const override { return TEXT("FGlazePreviewGuard"); }
+
+private:
+	void Fix()
+	{
+		TSharedPtr<SGlazeWindow> Open = GOpenWindow.Pin();
+		const UMaterialInterface* Live = Open && !Open->bClosing ? Open->PreviewInstance.Get() : nullptr;
+		// The preview is kept alive only by the undo buffer: once it is gone, nothing can bring it back.
+		Records.RemoveAll([](const FRecord& R) { return !R.Preview.IsValid() || !R.Component.IsValid(); });
+		for (const FRecord& R : Records)
+		{
+			// The open window shows its own preview and restores it when it closes.
+			if (R.Preview.Get() != Live)
+			{
+				RestoreSlots(R.Component.Get(), R.Preview.Get(), R.Originals);
+			}
+		}
+		if (Open && !Open->bClosing)
+		{
+			Open->OnUndoRedo();
+		}
+	}
+
+	struct FRecord
+	{
+		TWeakObjectPtr<UMaterialInterface> Preview;
+		TWeakObjectPtr<UMeshComponent> Component;
+		TArray<TObjectPtr<UMaterialInterface>> Originals;
+	};
+	TArray<FRecord> Records;
+};
+
+namespace
+{
+	TUniquePtr<FGlazePreviewGuard> GPreviewGuard;
+
 	void Notify(const FText& Text, bool bSuccess)
 	{
 		FNotificationInfo Info(Text);
@@ -59,7 +177,11 @@ namespace
 
 void SGlazeWindow::Construct(const FArguments& InArgs)
 {
-	Recipe.Reset(NewObject<UGlazeRecipe>());
+	Recipe.Reset(NewRecipe());
+	if (!GPreviewGuard)
+	{
+		GPreviewGuard = MakeUnique<FGlazePreviewGuard>();
+	}
 
 	FPropertyEditorModule& PropertyEditor = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	FDetailsViewArgs Args;
@@ -181,6 +303,16 @@ void SGlazeWindow::BindEditorEvents()
 	{
 		ApplyPreviewToTargets();
 	});
+	FCoreUObjectDelegates::OnObjectModified.AddSPLambda(this, [this](UObject* Object)
+	{
+		if (!bFixingTextures)
+		{
+			if (FTextureState* State = FixedTextures.Find(Cast<UTexture2D>(Object)))
+			{
+				State->bEditedElsewhere = true;
+			}
+		}
+	});
 	for (FSimpleMulticastDelegate* Begin : { &FEditorDelegates::OnDeleteActorsBegin, &FEditorDelegates::OnEditCutActorsBegin,
 		&FEditorDelegates::OnEditCopyActorsBegin, &FEditorDelegates::OnDuplicateActorsBegin })
 	{
@@ -197,6 +329,7 @@ void SGlazeWindow::UnbindEditorEvents()
 {
 	UPackage::PreSavePackageWithContextEvent.RemoveAll(this);
 	UPackage::PackageSavedWithContextEvent.RemoveAll(this);
+	FCoreUObjectDelegates::OnObjectModified.RemoveAll(this);
 	for (FSimpleMulticastDelegate* Event : { &FEditorDelegates::OnDeleteActorsBegin, &FEditorDelegates::OnEditCutActorsBegin,
 		&FEditorDelegates::OnEditCopyActorsBegin, &FEditorDelegates::OnDuplicateActorsBegin, &FEditorDelegates::OnDeleteActorsEnd,
 		&FEditorDelegates::OnEditCutActorsEnd, &FEditorDelegates::OnEditCopyActorsEnd, &FEditorDelegates::OnDuplicateActorsEnd })
@@ -317,11 +450,8 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 {
 	SetIndex = Index;
 	MatchNotes.Reset();
-	if (!bKeepSettings)
-	{
-		Recipe->OnChanged.RemoveAll(this);
-		Recipe.Reset(NewObject<UGlazeRecipe>());
-	}
+	Recipe->OnChanged.RemoveAll(this);
+	Recipe.Reset(NewRecipe(bKeepSettings ? Recipe.Get() : nullptr));
 	for (int32 I = 0; I < static_cast<int32>(EGlazeSlot::Num); ++I)
 	{
 		Recipe->SetSlot(static_cast<EGlazeSlot>(I), nullptr);
@@ -341,6 +471,7 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 			++Missing;
 		}
 	}
+	bSetHasMissing = Missing > 0;
 	if (Missing > 0)
 	{
 		MatchNotes.Add(FString::Printf(TEXT("Warning: %d texture(s) of this set were deleted."), Missing));
@@ -349,13 +480,26 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 	// These describe the maps of this set, so every set gets its own; the other settings carry over in a batch.
 	Recipe->RoughnessRemap.bInvert = Match.bInvertRoughness;
 	Recipe->bFlipGreen = Match.bFlipGreen;
-	if (Recipe->Emissive || !bKeepSettings)
+	// Switched on for the previous set's maps: off again when this set has no such map. A user's choice carries over.
+	if (Recipe->Emissive)
 	{
-		Recipe->bEmissive = Recipe->Emissive != nullptr;
+		bAutoEmissive = !Recipe->bEmissive || bAutoEmissive || !bKeepSettings;
+		Recipe->bEmissive = true;
+	}
+	else if (!bKeepSettings || bAutoEmissive)
+	{
+		Recipe->bEmissive = false;
+		bAutoEmissive = false;
 	}
 	if (Recipe->Opacity)
 	{
+		bAutoMasked = Recipe->BlendMode != EGlazeBlend::Masked || bAutoMasked || !bKeepSettings;
 		Recipe->BlendMode = EGlazeBlend::Masked;
+	}
+	else if (bAutoMasked)
+	{
+		Recipe->BlendMode = EGlazeBlend::Opaque;
+		bAutoMasked = false;
 	}
 	Recipe->AssetName = TEXT("MI_") + (Match.SetName.IsEmpty() ? Sets[Index].Key : Match.SetName);
 	if (bFolderEdited)
@@ -402,17 +546,28 @@ void SGlazeWindow::OnRecipeChanged(const FPropertyChangedEvent& Event)
 	{
 		bFolderEdited = true;
 	}
-	if (IsTextureSlotProperty(Name) || Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, DetailNoise))
+	if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, Emissive) && Recipe->Emissive && !Recipe->bEmissive)
+	{
+		Recipe->bEmissive = true;
+		bAutoEmissive = true;
+	}
+	if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, Opacity) && Recipe->Opacity && Recipe->BlendMode != EGlazeBlend::Masked)
+	{
+		Recipe->BlendMode = EGlazeBlend::Masked;
+		bAutoMasked = true;
+	}
+	if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, bEmissive))
+	{
+		bAutoEmissive = false;
+	}
+	if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, BlendMode))
+	{
+		bAutoMasked = false;
+	}
+	// After the switches above: a map is fixed only once the material samples it (blend mode, emissive, projection...).
+	if (Event.ChangeType != EPropertyChangeType::Interactive)
 	{
 		FixTextures();
-		if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, Emissive) && Recipe->Emissive)
-		{
-			Recipe->bEmissive = true;
-		}
-		if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, Opacity) && Recipe->Opacity)
-		{
-			Recipe->BlendMode = EGlazeBlend::Masked;
-		}
 	}
 	// The clip value is compiled into the shader: recompile once on release, not on every step of a drag.
 	if (Event.ChangeType != EPropertyChangeType::Interactive || Name != GET_MEMBER_NAME_CHECKED(UGlazeRecipe, OpacityClip))
@@ -434,7 +589,8 @@ void SGlazeWindow::RefreshPreview()
 		{
 			return;
 		}
-		UMaterialInstanceConstant* MI = NewObject<UMaterialInstanceConstant>(GetTransientPackage(), NAME_None, RF_Transient);
+		UMaterialInstanceConstant* MI = NewObject<UMaterialInstanceConstant>(GetTransientPackage(),
+			MakeUniqueObjectName(GetTransientPackage(), UMaterialInstanceConstant::StaticClass(), TEXT("GlazePreview")), RF_Transient);
 		MI->SetParentEditorOnly(Master);
 		PreviewInstance.Reset(MI);
 		PreviewStaticKey.Reset();
@@ -521,6 +677,10 @@ void SGlazeWindow::ApplyPreviewToTargets()
 				UMaterialInterface* Current = Component->OverrideMaterials.IsValidIndex(I) ? Component->OverrideMaterials[I].Get() : nullptr;
 				if (Current != PreviewInstance.Get() && Current == Target.Original(I))
 				{
+					if (GPreviewGuard)
+					{
+						GPreviewGuard->Remember(PreviewInstance.Get(), Component, Target.OriginalOverrides);
+					}
 					Component->SetMaterial(I, PreviewInstance.Get());
 				}
 			}
@@ -538,13 +698,7 @@ void SGlazeWindow::RestoreTargets()
 			continue;
 		}
 		// Only slots still showing the preview: an undo or a material assigned meanwhile is kept.
-		for (int32 I = 0; I < Component->OverrideMaterials.Num(); ++I)
-		{
-			if (Component->OverrideMaterials[I] == PreviewInstance.Get())
-			{
-				Component->SetMaterial(I, Target.Original(I));
-			}
-		}
+		RestoreSlots(Component, PreviewInstance.Get(), Target.OriginalOverrides);
 	}
 }
 
@@ -615,6 +769,11 @@ FReply SGlazeWindow::OnCreateAll()
 {
 	while (true)
 	{
+		if (bSetHasMissing)
+		{
+			Notify(LOCTEXT("SetMissing", "Some textures of this set were deleted: check it, then Create or Skip."), false);
+			return FReply::Handled();
+		}
 		if (!CreateCurrent())
 		{
 			return FReply::Handled(); // stay on the failed set
@@ -683,6 +842,7 @@ void SGlazeWindow::CloseAll()
 		W->Close(/*bImmediate*/ true);
 	}
 	GOpenWindow.Reset();
+	GPreviewGuard.Reset();
 }
 
 void SGlazeWindow::FixTextures()
@@ -699,7 +859,23 @@ void SGlazeWindow::FixTextures()
 			FixedTextures.Add(T, { T->CompressionSettings, T->SRGB != 0, T->VirtualTextureStreaming != 0, T->GetPackage()->IsDirty() });
 		}
 	}
-	Glaze::FixTextureSettings(*Recipe);
+	TGuardValue<bool> Fixing(bFixingTextures, true);
+	for (UTexture2D* T : Glaze::FixTextureSettings(*Recipe))
+	{
+		if (FTextureState* S = FixedTextures.Find(T))
+		{
+			S->FixedCompression = T->CompressionSettings;
+			S->bFixedSRGB = T->SRGB != 0;
+			S->bFixedVirtual = T->VirtualTextureStreaming != 0;
+		}
+	}
+}
+
+void SGlazeWindow::OnUndoRedo()
+{
+	Details->ForceRefresh();
+	RefreshPreview();
+	RefreshInfo();
 }
 
 void SGlazeWindow::ForgetSavedTextureFixes()
@@ -717,16 +893,22 @@ void SGlazeWindow::ForgetSavedTextureFixes()
 void SGlazeWindow::RevertTextureFixes()
 {
 	ForgetSavedTextureFixes();
+	TGuardValue<bool> Fixing(bFixingTextures, true);
 	for (const TPair<TWeakObjectPtr<UTexture2D>, FTextureState>& Pair : FixedTextures)
 	{
 		UTexture2D* T = Pair.Key.Get();
 		const FTextureState& S = Pair.Value;
+		// Changed again since (by the user or an undo): those settings are theirs.
+		if (T->CompressionSettings != S.FixedCompression || (T->SRGB != 0) != S.bFixedSRGB || (T->VirtualTextureStreaming != 0) != S.bFixedVirtual)
+		{
+			continue;
+		}
 		T->PreEditChange(nullptr);
 		T->CompressionSettings = S.Compression;
 		T->SRGB = S.bSRGB;
 		T->VirtualTextureStreaming = S.bVirtual;
 		T->PostEditChange();
-		if (!S.bWasDirty)
+		if (!S.bWasDirty && !S.bEditedElsewhere)
 		{
 			T->GetPackage()->SetDirtyFlag(false);
 		}

@@ -61,6 +61,9 @@ private:
 	void FixTextures();
 	/** Puts back texture settings changed by Glaze that were not saved with a created instance. */
 	void RevertTextureFixes();
+	/** Undo/redo can change the recipe: show it and preview it again. */
+	void OnUndoRedo();
+	friend class FGlazePreviewGuard;
 	void ForgetSavedTextureFixes();
 
 	FReply OnCreate();
@@ -84,6 +87,11 @@ private:
 	TWeakObjectPtr<UMaterialInstanceConstant> UnsavedInstance;
 	/** The user picked the output folder: batch sets keep it instead of using their texture folders. */
 	bool bFolderEdited = false;
+	/** Masked / Emissive were switched on by Glaze for a set's maps, not by the user: the next set without them turns them off. */
+	bool bAutoMasked = false;
+	bool bAutoEmissive = false;
+	/** Some textures of the current set were deleted: Create All stops here. */
+	bool bSetHasMissing = false;
 
 	struct FTextureState
 	{
@@ -91,7 +99,14 @@ private:
 		bool bSRGB;
 		bool bVirtual;
 		bool bWasDirty;
+		/** The settings Glaze set: Cancel reverts only while the texture still has them. */
+		TextureCompressionSettings FixedCompression = TC_Default;
+		bool bFixedSRGB = false;
+		bool bFixedVirtual = false;
+		/** Changed outside Glaze after the fix (e.g. in the Texture Editor): Cancel keeps it marked unsaved. */
+		bool bEditedElsewhere = false;
 	};
+	bool bFixingTextures = false;
 	TMap<TWeakObjectPtr<UTexture2D>, FTextureState> FixedTextures;
 
 	TArray<TPair<FString, TArray<TObjectPtr<UTexture2D>>>> Sets;
