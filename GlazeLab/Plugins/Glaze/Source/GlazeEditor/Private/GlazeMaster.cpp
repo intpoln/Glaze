@@ -12,6 +12,7 @@
 #include "Materials/MaterialExpressionAbs.h"
 #include "Materials/MaterialExpressionAdd.h"
 #include "Materials/MaterialExpressionAppendVector.h"
+#include "Materials/MaterialExpressionCameraVectorWS.h"
 #include "Materials/MaterialExpressionComponentMask.h"
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionConstant3Vector.h"
@@ -39,10 +40,12 @@
 #include "Materials/MaterialExpressionSine.h"
 #include "Materials/MaterialExpressionStaticSwitchParameter.h"
 #include "Materials/MaterialExpressionSubtract.h"
+#include "Materials/MaterialExpressionTime.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionVertexInterpolator.h"
 #include "Materials/MaterialExpressionVertexNormalWS.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
@@ -89,6 +92,11 @@ namespace Param
 	const FName DetailColor(TEXT("Detail Color")), DetailColorAmount(TEXT("Detail Color Amount")), DetailRoughness(TEXT("Detail Roughness")), DetailBump(TEXT("Detail Bump"));
 	const FName UseMacro(TEXT("Use Macro Variation")), MacroSize(TEXT("Macro Size")), MacroTiling(TEXT("Macro Tiling"));
 	const FName MacroAmount(TEXT("Macro Amount")), MacroRoughness(TEXT("Macro Roughness"));
+	const FName Triplanar(TEXT("Triplanar")), TriplanarLocal(TEXT("Triplanar In Object Space")), TriplanarSize(TEXT("Triplanar Size"));
+	const FName HeightRatio(TEXT("Parallax Depth"));
+	const FName UseWind(TEXT("Use Wind")), WindByHeight(TEXT("Wind By Height")), WindByVertexColor(TEXT("Wind By Vertex Color"));
+	const FName WindDirection(TEXT("Wind Direction")), WindStrength(TEXT("Wind Strength")), WindSpeed(TEXT("Wind Speed"));
+	const FName WindGustSize(TEXT("Wind Gust Size")), WindHeight(TEXT("Wind Full Sway Height"));
 }
 
 namespace
@@ -128,7 +136,7 @@ namespace
 	};
 
 	// Texture sample / vector parameter output indices: RGB, R, G, B, A, RGBA.
-	constexpr int32 OutRGB = 0, OutA = 4, OutRGBA = 5;
+	constexpr int32 OutRGB = 0, OutRGBA = 5;
 
 	void Link(FExpressionInput& Input, const FPin& Pin)
 	{
@@ -297,11 +305,13 @@ namespace
 			return { E };
 		}
 		/** Sine / cosine of an angle in degrees. */
-		FPin SinDeg(const FPin& A)
+		FPin SinDeg(const FPin& A) { return Sin(A, 360.f); }
+		/** Sine with the given period (1 = one cycle per unit). */
+		FPin Sin(const FPin& A, float Period)
 		{
 			auto* E = New<UMaterialExpressionSine>();
 			Link(E->Input, A);
-			E->Period = 360.f;
+			E->Period = Period;
 			return { E };
 		}
 		FPin CosDeg(const FPin& A)
@@ -381,36 +391,88 @@ void BuildMasterGraph(UMaterial* Material)
 	FGraph G(Material);
 	UMaterialEditorOnlyData* Out = Material->GetEditorOnlyData();
 
+	// ---- Positions and normals of the 3D spaces (triplanar, noise, wind) ----
+	auto* NormalWS = G.New<UMaterialExpressionVertexNormalWS>();
+	auto* WorldPos = G.New<UMaterialExpressionWorldPosition>();
+	WorldPos->WorldPositionShaderOffset = WPT_ExcludeAllShaderOffsets; // no swimming once WPO is used
+	auto* LocalPos = G.New<UMaterialExpressionLocalPosition>();
+	LocalPos->IncludedOffsets = EPositionIncludedOffsets::ExcludeOffsets;
+	auto* NormalLocal = G.New<UMaterialExpressionTransform>();
+	NormalLocal->TransformSourceType = TRANSFORMSOURCE_World;
+	NormalLocal->TransformType = TRANSFORM_Local;
+	Link(NormalLocal->Input, { NormalWS });
+
 	// ---- UV: rotate around the tile center, then tile and offset ----
 	const TCHAR* GroupUV = TEXT("02 UV");
 	auto* TexCoord = G.New<UMaterialExpressionTextureCoordinate>();
 	const FPin Angle = G.Scalar(Param::Rotation, 0.f, GroupUV, -180.f, 180.f);
 	const FPin Sin = G.SinDeg(Angle);
 	const FPin Cos = G.CosDeg(Angle);
-	const FPin Centered = G.Sub({ TexCoord }, G.Const(0.5f));
-	const FPin CX = G.Mask(Centered, true, false);
-	const FPin CY = G.Mask(Centered, false, true);
-	const FPin RX = G.Sub(G.Mul(CX, Cos), G.Mul(CY, Sin));
-	const FPin RY = G.Add(G.Mul(CX, Sin), G.Mul(CY, Cos));
-	const FPin Rotated = G.Add(G.Append(RX, RY), G.Const(0.5f));
+	auto Rotate = [&](const FPin& V) -> FPin
+	{
+		const FPin X = G.Mask(V, true, false);
+		const FPin Y = G.Mask(V, false, true);
+		return G.Append(G.Sub(G.Mul(X, Cos), G.Mul(Y, Sin)), G.Add(G.Mul(X, Sin), G.Mul(Y, Cos)));
+	};
+	const FPin Rotated = G.Add(Rotate(G.Sub({ TexCoord }, G.Const(0.5f))), G.Const(0.5f));
 	const FPin TilingXY = G.Mask(G.Vector(Param::TilingXY, FLinearColor(1, 1, 0, 0), GroupUV), true, true);
 	const FPin Tiling = G.Mul(TilingXY, G.Scalar(Param::Tiling, 1.f, GroupUV, 0.01f, 16.f));
 	const FPin OffsetXY = G.Mask(G.Vector(Param::Offset, FLinearColor(0, 0, 0, 0), GroupUV), true, true);
-	const FPin UV = G.Add(G.Mul(Rotated, Tiling), OffsetXY);
+	const FPin UV0 = G.Add(G.Mul(Rotated, Tiling), OffsetXY);
+
+	// Parallax (Bump Offset math): shift the UVs along the tangent-space view direction by the height. The tangent
+	// frame follows the mesh UVs, so the shift is rotated like the UVs. Depth is relative to one texture tile.
+	UMaterialExpressionTextureSampleParameter2D* PackedAtUV0 = G.Texture(Param::PackedMap, DefaultMasksTexture, SAMPLERTYPE_Masks, UV0);
+	FPin UV;
+	{
+		UMaterialExpressionTextureSampleParameter2D* HeightTex = G.Texture(Param::Map(EGlazeSlot::Height), DefaultMasksTexture, SAMPLERTYPE_Masks, UV0);
+		const FPin Channel = G.Vector(Param::Channel(EGlazeSlot::Height), FLinearColor(1, 0, 0, 0), GroupUV, OutRGBA);
+		const FPin Height = G.Switch(Param::FromPacked(EGlazeSlot::Height), G.Dot({ PackedAtUV0, OutRGBA }, Channel), G.Dot({ HeightTex, OutRGBA }, Channel), GroupUV);
+		auto* CameraTS = G.New<UMaterialExpressionTransform>();
+		CameraTS->TransformSourceType = TRANSFORMSOURCE_World;
+		CameraTS->TransformType = TRANSFORM_Tangent;
+		Link(CameraTS->Input, { G.New<UMaterialExpressionCameraVectorWS>() });
+		const FPin Depth = G.Mul(G.Sub(Height, G.Const(0.5f)), G.Scalar(Param::HeightRatio, 0.04f, GroupUV, 0.f, 0.2f));
+		UV = G.Switch(Param::UseMap(EGlazeSlot::Height), G.Add(UV0, G.Mul(Rotate(G.Mask({ CameraTS }, true, true)), Depth)), UV0, GroupUV);
+	}
+
+	// ---- Triplanar projection of the main textures: three planar samples blended by the normal ----
+	const FPin TriP = G.Div(G.Switch(Param::TriplanarLocal, { LocalPos }, { WorldPos }, GroupUV), G.Scalar(Param::TriplanarSize, 100.f, GroupUV, 10.f, 1000.f));
+	const FPin TriN = G.Switch(Param::TriplanarLocal, { NormalLocal }, { NormalWS }, GroupUV);
+	FPin TriW = G.Abs(TriN);
+	TriW = G.Mul(TriW, TriW);
+	TriW = G.Mul(TriW, TriW); // sharper blend between the projections
+	TriW = G.Div(TriW, G.Dot(TriW, G.Const3(FLinearColor(1, 1, 1))));
+	const FPin WX = G.Mask(TriW, true, false), WY = G.Mask(TriW, false, true), WZ = G.Mask(TriW, false, false, true);
+	// Vertical planes run V down the world Z axis, so images stand upright.
+	const FPin MinusZ = G.Mul(G.Mask(TriP, false, false, true), G.Const(-1.f));
+	const FPin UVX = G.Append(G.Mask(TriP, false, true), MinusZ);
+	const FPin UVY = G.Append(G.Mask(TriP, true, false), MinusZ);
+	const FPin UVZ = G.Mask(TriP, true, true);
+
+	/** A main texture by UV or triplanar (Triplanar switch); RGBA. All samples of one parameter share their metadata. */
+	auto Sample = [&](FName Name, const TCHAR* DefaultPath, EMaterialSamplerType Type, UMaterialExpressionTextureSampleParameter2D* SameAs = nullptr) -> FPin
+	{
+		UMaterialExpressionTextureSampleParameter2D* E = G.Texture(Name, DefaultPath, Type, UV);
+		if (SameAs)
+		{
+			E->SortPriority = SameAs->SortPriority;
+		}
+		auto Projected = [&](const FPin& Coords) -> FPin
+		{
+			UMaterialExpressionTextureSampleParameter2D* P = G.Texture(Name, DefaultPath, Type, Coords);
+			P->SortPriority = E->SortPriority;
+			return { P, OutRGBA };
+		};
+		const FPin Tri = G.Add(G.Add(G.Mul(Projected(UVX), WX), G.Mul(Projected(UVY), WY)), G.Mul(Projected(UVZ), WZ));
+		return G.Switch(Param::Triplanar, Tri, { E, OutRGBA }, GroupUV);
+	};
+	auto RGB = [&](const FPin& RGBA) { return G.Mask(RGBA, true, true, true); };
 
 	// ---- Noise: detail mask and macro patches in UV / world / object / bind-pose space; applied to color, roughness, normal below ----
 	const TCHAR* GroupNoise = TEXT("12 Noise");
-	auto* NormalWS = G.New<UMaterialExpressionVertexNormalWS>();
 	FPin Position, NoiseNormal;
 	{
-		auto* WorldPos = G.New<UMaterialExpressionWorldPosition>();
-		WorldPos->WorldPositionShaderOffset = WPT_ExcludeAllShaderOffsets; // no swimming once WPO is used
-		auto* LocalPos = G.New<UMaterialExpressionLocalPosition>();
-		LocalPos->IncludedOffsets = EPositionIncludedOffsets::ExcludeOffsets;
-		auto* NormalLocal = G.New<UMaterialExpressionTransform>();
-		NormalLocal->TransformSourceType = TRANSFORMSOURCE_World;
-		NormalLocal->TransformType = TRANSFORM_Local;
-		Link(NormalLocal->Input, { NormalWS });
 		// Pre-skinned data exists only in the vertex shader.
 		const FPin PreSkinnedPos = G.Interpolate({ G.New<UMaterialExpressionPreSkinnedPosition>() });
 		const FPin PreSkinnedNormal = G.Interpolate({ G.New<UMaterialExpressionPreSkinnedNormal>() });
@@ -425,7 +487,7 @@ void BuildMasterGraph(UMaterial* Material)
 
 		// Texture: one sample in UV space, or triplanar (three samples blended by the normal) in 3D spaces.
 		TArray<UMaterialExpressionTextureSampleParameter2D*> Samples;
-		auto Sample = [&](const FPin& Coords) -> FPin
+		auto DetailSample = [&](const FPin& Coords) -> FPin
 		{
 			UMaterialExpressionTextureSampleParameter2D* E = G.Texture(Param::DetailMap, nullptr, SAMPLERTYPE_LinearGrayscale, Coords);
 			if (Samples.Num() > 0)
@@ -435,14 +497,14 @@ void BuildMasterGraph(UMaterial* Material)
 			Samples.Add(E);
 			return { E, 1 }; // R
 		};
-		const FPin UVSample = Sample(DetailUV);
+		const FPin UVSample = DetailSample(DetailUV);
 		FPin W = G.Abs(NoiseNormal);
 		W = G.Mul(W, W);
 		W = G.Mul(W, W); // sharper blend between the projections
 		W = G.Div(W, G.Dot(W, G.Const3(FLinearColor(1, 1, 1))));
-		const FPin X = Sample(G.Mask(P, false, true, true));
-		const FPin Y = Sample(G.Mask(P, true, false, true));
-		const FPin Z = Sample(G.Mask(P, true, true));
+		const FPin X = DetailSample(G.Mask(P, false, true, true));
+		const FPin Y = DetailSample(G.Mask(P, true, false, true));
+		const FPin Z = DetailSample(G.Mask(P, true, true));
 		const FPin Triplanar = G.Dot(G.Append(G.Append(X, Y), Z), W);
 		const FPin FromTexture = G.Switch(Param::DetailUV, UVSample, Triplanar, GroupNoise);
 
@@ -467,8 +529,8 @@ void BuildMasterGraph(UMaterial* Material)
 	// ---- Base color ----
 	const TCHAR* GroupColor = TEXT("03 Base Color");
 	const TCHAR* GroupCC = TEXT("04 Color Correction");
-	UMaterialExpressionTextureSampleParameter2D* BaseTex = G.Texture(Param::Map(EGlazeSlot::BaseColor), DefaultColorTexture, SAMPLERTYPE_Color, UV);
-	FPin Color = G.Switch(Param::UseMap(EGlazeSlot::BaseColor), { BaseTex, OutRGB }, G.Const3(FLinearColor::White), GroupColor);
+	const FPin BaseRGBA = Sample(Param::Map(EGlazeSlot::BaseColor), DefaultColorTexture, SAMPLERTYPE_Color);
+	FPin Color = G.Switch(Param::UseMap(EGlazeSlot::BaseColor), RGB(BaseRGBA), G.Const3(FLinearColor::White), GroupColor);
 	{
 		const FPin Desat = G.Desaturate(Color, G.Scalar(Param::Desaturation, 0.f, GroupCC, 0.f, 1.f));
 		// Contrast around linear mid grey (0.18 = sRGB 0.5), so a contrast change keeps mid tones in place.
@@ -495,16 +557,47 @@ void BuildMasterGraph(UMaterial* Material)
 	// ---- Normal: strength, green flip, rotation compensation (vectors rotate with the UVs) ----
 	{
 		const TCHAR* GroupNormal = TEXT("10 Normal");
-		UMaterialExpressionTextureSampleParameter2D* NormalTex = G.Texture(Param::Map(EGlazeSlot::Normal), DefaultNormalTexture, SAMPLERTYPE_Normal, UV);
-		const FPin N = { NormalTex, OutRGB };
-		const FPin NX = G.Mask(N, true, false);
-		const FPin Flip = G.Sub(G.Const(1.f), G.Mul(G.Scalar(Param::FlipGreen, 0.f, GroupNormal, 0.f, 1.f), G.Const(2.f)));
-		const FPin NY = G.Mul(G.Mask(N, false, true), Flip);
+		const FPin FlipY = G.Sub(G.Const(1.f), G.Mul(G.Scalar(Param::FlipGreen, 0.f, GroupNormal, 0.f, 1.f), G.Const(2.f)));
+		const FPin Strength = G.Scalar(Param::NormalStrength, 1.f, GroupNormal, 0.f, 3.f);
+		const FName NormalMap = Param::Map(EGlazeSlot::Normal);
+		/** Tangent-space normal of one sample with strength and green flip. */
+		auto Unpack = [&](const FPin& N) -> FPin
+		{
+			const FPin XY = G.Mul(G.Append(G.Mask(N, true, false), G.Mul(G.Mask(N, false, true), FlipY)), Strength);
+			return G.Append(XY, G.Mask(N, false, false, true));
+		};
+		UMaterialExpressionTextureSampleParameter2D* NormalTex = G.Texture(NormalMap, DefaultNormalTexture, SAMPLERTYPE_Normal, UV);
+		const FPin N = Unpack({ NormalTex, OutRGB });
 		// Inverse rotation of the UV rotation above.
-		const FPin RNX = G.Add(G.Mul(NX, Cos), G.Mul(NY, Sin));
-		const FPin RNY = G.Sub(G.Mul(NY, Cos), G.Mul(NX, Sin));
-		const FPin XY = G.Mul(G.Append(RNX, RNY), G.Scalar(Param::NormalStrength, 1.f, GroupNormal, 0.f, 3.f));
-		const FPin Normal = G.Append(XY, G.Mask(N, false, false, true));
+		const FPin NX = G.Mask(N, true, false);
+		const FPin NY = G.Mask(N, false, true);
+		const FPin ByUV = G.Append(G.Append(G.Add(G.Mul(NX, Cos), G.Mul(NY, Sin)), G.Sub(G.Mul(NY, Cos), G.Mul(NX, Sin))), G.Mask(N, false, false, true));
+
+		// Triplanar: whiteout blend of each plane's normal with the surface normal, in the projection space
+		// (plane U/V axes: X plane +Y/-Z, Y plane +X/-Z, Z plane +X/+Y), then into tangent space.
+		auto Projected = [&](const FPin& Coords) -> FPin
+		{
+			UMaterialExpressionTextureSampleParameter2D* E = G.Texture(NormalMap, DefaultNormalTexture, SAMPLERTYPE_Normal, Coords);
+			E->SortPriority = NormalTex->SortPriority;
+			return Unpack({ E, OutRGB });
+		};
+		const FPin TX = Projected(UVX), TY = Projected(UVY), TZ = Projected(UVZ);
+		auto C = [&](const FPin& V, int32 I) { return G.Mask(V, I == 0, I == 1, I == 2); };
+		const FPin SX = C(TriN, 0), SY = C(TriN, 1), SZ = C(TriN, 2);
+		const FPin PX = G.Append(G.Append(G.Mul(G.Abs(C(TX, 2)), SX), G.Add(C(TX, 0), SY)), G.Sub(SZ, C(TX, 1)));
+		const FPin PY = G.Append(G.Append(G.Add(C(TY, 0), SX), G.Mul(G.Abs(C(TY, 2)), SY)), G.Sub(SZ, C(TY, 1)));
+		const FPin PZ = G.Append(G.Append(G.Add(C(TZ, 0), SX), G.Add(C(TZ, 1), SY)), G.Mul(G.Abs(C(TZ, 2)), SZ));
+		const FPin Blended = G.Normalize(G.Add(G.Add(G.Mul(PX, WX), G.Mul(PY, WY)), G.Mul(PZ, WZ)));
+		auto ToTangent = [&](EMaterialVectorCoordTransformSource From) -> FPin
+		{
+			auto* E = G.New<UMaterialExpressionTransform>();
+			E->TransformSourceType = From;
+			E->TransformType = TRANSFORM_Tangent;
+			Link(E->Input, Blended);
+			return { E };
+		};
+		const FPin ByTriplanar = G.Switch(Param::TriplanarLocal, ToTangent(TRANSFORMSOURCE_Local), ToTangent(TRANSFORMSOURCE_World), GroupUV);
+		const FPin Normal = G.Switch(Param::Triplanar, ByTriplanar, ByUV, GroupUV);
 		const FPin Base = G.Switch(Param::UseMap(EGlazeSlot::Normal), Normal, G.Const3(FLinearColor(0, 0, 1)), GroupNormal);
 
 		// Detail bump from screen-space derivatives of the detail height (works in every noise space, no extra samples).
@@ -528,14 +621,13 @@ void BuildMasterGraph(UMaterial* Material)
 	}
 
 	// ---- Grayscale channels: own map or a channel of the shared packed map, remapped; or a constant ----
-	UMaterialExpressionTextureSampleParameter2D* PackedTex = G.Texture(Param::PackedMap, DefaultMasksTexture, SAMPLERTYPE_Masks, UV);
+	const FPin PackedRGBA = Sample(Param::PackedMap, DefaultMasksTexture, SAMPLERTYPE_Masks, PackedAtUV0);
 	auto Grayscale = [&](EGlazeSlot Slot, const FPin& NoMap) -> FPin
 	{
 		const TCHAR* Group = GroupOf(Slot);
-		UMaterialExpressionTextureSampleParameter2D* Tex = G.Texture(Param::Map(Slot), DefaultMasksTexture, SAMPLERTYPE_Masks, UV);
 		const FPin Channel = G.Vector(Param::Channel(Slot), FLinearColor(1, 0, 0, 0), Group, OutRGBA);
-		const FPin Own = G.Dot({ Tex, OutRGBA }, Channel);
-		const FPin Packed = G.Dot({ PackedTex, OutRGBA }, Channel);
+		const FPin Own = G.Dot(Sample(Param::Map(Slot), DefaultMasksTexture, SAMPLERTYPE_Masks), Channel);
+		const FPin Packed = G.Dot(PackedRGBA, Channel);
 		FPin V = G.Switch(Param::FromPacked(Slot), Packed, Own, Group);
 		V = G.Lerp(V, G.OneMinus(V), G.Scalar(Param::Invert(Slot), 0.f, Group, 0.f, 1.f));
 		const FPin Half = G.Const(0.5f);
@@ -559,7 +651,7 @@ void BuildMasterGraph(UMaterial* Material)
 	// ---- Opacity (used when the instance overrides Blend Mode to Masked) ----
 	{
 		const TCHAR* Group = GroupOf(EGlazeSlot::Opacity);
-		FPin Opacity = Grayscale(EGlazeSlot::Opacity, { BaseTex, OutA });
+		FPin Opacity = Grayscale(EGlazeSlot::Opacity, G.Mask(BaseRGBA, false, false, false, true));
 		Opacity = G.Mul(Opacity, G.Scalar(Param::OpacityAmount, 1.f, Group, 0.f, 1.f));
 		const FPin Dithered = G.Call(TEXT("/Engine/Functions/Engine_MaterialFunctions02/Utility/DitherTemporalAA.DitherTemporalAA"),
 			{ { TEXT("Alpha Threshold"), Opacity } });
@@ -570,12 +662,30 @@ void BuildMasterGraph(UMaterial* Material)
 	// ---- Emissive ----
 	{
 		const TCHAR* Group = TEXT("11 Emissive");
-		UMaterialExpressionTextureSampleParameter2D* EmissiveTex = G.Texture(Param::Map(EGlazeSlot::Emissive), DefaultColorTexture, SAMPLERTYPE_Color, UV);
-		FPin Map = G.Switch(Param::UseMap(EGlazeSlot::Emissive), { EmissiveTex, OutRGB }, G.Const3(FLinearColor::White), Group);
-		Map = G.Switch(Param::EmissiveFromBaseColor, { BaseTex, OutRGB }, Map, Group);
+		const FPin EmissiveRGB = RGB(Sample(Param::Map(EGlazeSlot::Emissive), DefaultColorTexture, SAMPLERTYPE_Color));
+		FPin Map = G.Switch(Param::UseMap(EGlazeSlot::Emissive), EmissiveRGB, G.Const3(FLinearColor::White), Group);
+		Map = G.Switch(Param::EmissiveFromBaseColor, RGB(BaseRGBA), Map, Group);
 		const FPin Emissive = G.Mul(G.Mul(Map, G.Vector(Param::EmissiveColor, FLinearColor::White, Group)),
 			G.Scalar(Param::EmissiveIntensity, 1.f, Group, 0.f, 50.f));
 		Link(Out->EmissiveColor, G.Switch(Param::UseEmissive, Emissive, G.Const3(FLinearColor::Black), Group));
+	}
+
+	// ---- Wind: vertices sway along the wind direction in gusts travelling with it ----
+	{
+		const TCHAR* Group = TEXT("13 Wind");
+		const FPin Yaw = G.Scalar(Param::WindDirection, 0.f, Group, -180.f, 180.f);
+		const FPin Dir = G.Append(G.Append(G.CosDeg(Yaw), G.SinDeg(Yaw)), G.Const(0.f));
+		// Phase in gusts: position along the wind minus time. Position is divided first to keep large worlds precise.
+		const FPin Along = G.Dot(G.Div({ WorldPos }, G.Scalar(Param::WindGustSize, 800.f, Group, 50.f, 5000.f)), Dir);
+		const FPin Phase = G.Sub(Along, G.Mul({ G.New<UMaterialExpressionTime>() }, G.Scalar(Param::WindSpeed, 0.5f, Group, 0.f, 4.f)));
+		const FPin Wave = G.Add(G.Mul(G.Sin(Phase, 1.f), G.Const(0.6f)), G.Mul(G.Sin(G.Add(G.Mul(Phase, G.Const(2.3f)), G.Const(0.37f)), 1.f), G.Const(0.4f)));
+		const FPin Push = G.Add(G.Mul(Wave, G.Const(0.5f)), G.Const(0.5f)); // mostly with the wind, a little back
+		FPin ByHeight = G.Saturate(G.Div(G.Mask({ LocalPos }, false, false, true), G.Scalar(Param::WindHeight, 200.f, Group, 10.f, 2000.f)));
+		ByHeight = G.Mul(ByHeight, ByHeight); // stiff near the base
+		const FPin Weight = G.Switch(Param::WindByVertexColor, { G.New<UMaterialExpressionVertexColor>(), 1 },
+			G.Switch(Param::WindByHeight, ByHeight, G.Const(1.f), Group), Group);
+		const FPin Offset = G.Mul(Dir, G.Mul(G.Mul(Push, Weight), G.Scalar(Param::WindStrength, 5.f, Group, 0.f, 50.f)));
+		Link(Out->WorldPositionOffset, G.Switch(Param::UseWind, Offset, G.Const3(FLinearColor::Black), Group));
 	}
 
 	UMaterialEditingLibrary::LayoutMaterialExpressions(Material);

@@ -38,7 +38,7 @@ void UGlazeRecipe::SetSlot(EGlazeSlot Slot, UTexture2D* Texture, EGlazeChannel C
 	case EGlazeSlot::Specular:         Specular = Texture; SpecularChannel = Channel; break;
 	case EGlazeSlot::Opacity:          Opacity = Texture; OpacityChannel = Channel; break;
 	case EGlazeSlot::Emissive:         Emissive = Texture; break;
-	case EGlazeSlot::Height:           Height = Texture; break;
+	case EGlazeSlot::Height:           Height = Texture; HeightChannel = Channel; break;
 	default: break;
 	}
 }
@@ -52,6 +52,7 @@ EGlazeChannel UGlazeRecipe::GetChannel(EGlazeSlot Slot) const
 	case EGlazeSlot::AmbientOcclusion: return AmbientOcclusionChannel;
 	case EGlazeSlot::Specular:         return SpecularChannel;
 	case EGlazeSlot::Opacity:          return OpacityChannel;
+	case EGlazeSlot::Height:           return HeightChannel;
 	default:                           return EGlazeChannel::R;
 	}
 }

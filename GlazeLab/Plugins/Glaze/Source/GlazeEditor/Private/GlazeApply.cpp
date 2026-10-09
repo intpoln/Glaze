@@ -22,6 +22,8 @@ namespace
 	const FName MetaRecipeKey(TEXT("GlazeRecipe"));
 
 	const EGlazeSlot GrayscaleSlots[] = { EGlazeSlot::Roughness, EGlazeSlot::Metallic, EGlazeSlot::AmbientOcclusion, EGlazeSlot::Specular, EGlazeSlot::Opacity };
+	/** Slots that can read a channel of the shared Packed Map. */
+	const EGlazeSlot PackableSlots[] = { EGlazeSlot::Roughness, EGlazeSlot::Metallic, EGlazeSlot::AmbientOcclusion, EGlazeSlot::Specular, EGlazeSlot::Opacity, EGlazeSlot::Height };
 
 	enum class EUse : uint8 { Color, Normal, Masks, Grayscale };
 
@@ -65,14 +67,14 @@ namespace
 		return C;
 	}
 
-	/** The slot's texture when the material samples it: Opacity only when Masked, Emissive only as its own map. */
+	/** The slot's texture when the material samples it: Opacity only when Masked, Emissive only as its own map, Height only with UVs. */
 	UTexture2D* ActiveSlot(const UGlazeRecipe& R, EGlazeSlot Slot)
 	{
 		switch (Slot)
 		{
 		case EGlazeSlot::Opacity:  return R.BlendMode == EGlazeBlend::Masked ? R.Opacity.Get() : nullptr;
 		case EGlazeSlot::Emissive: return R.bEmissive && !(R.bEmissiveFromBaseColor && R.BaseColor) ? R.Emissive.Get() : nullptr;
-		case EGlazeSlot::Height:   return nullptr; // not sampled yet
+		case EGlazeSlot::Height:   return R.Projection == EGlazeProjection::UV ? R.Height.Get() : nullptr;
 		default:                   return R.GetSlot(Slot);
 		}
 	}
@@ -81,7 +83,7 @@ namespace
 	UTexture2D* FindPacked(const UGlazeRecipe& R)
 	{
 		TMap<UTexture2D*, int32> Uses;
-		for (EGlazeSlot Slot : GrayscaleSlots)
+		for (EGlazeSlot Slot : PackableSlots)
 		{
 			if (UTexture2D* T = ActiveSlot(R, Slot))
 			{
@@ -234,7 +236,11 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	bool bRemovedTexture = false;
 	auto SetTexture = [MI, &bRemovedTexture](FName Name, UTexture* Texture) { bRemovedTexture |= Glaze::SetTexture(MI, Name, Texture); };
 
-	// UV
+	// UV / triplanar
+	const bool bTriplanar = R.Projection != EGlazeProjection::UV;
+	Switches.Add({ Triplanar, bTriplanar });
+	Switches.Add({ TriplanarLocal, R.Projection == EGlazeProjection::Local });
+	Scalar(TriplanarSize, R.TriplanarSize);
 	Scalar(Tiling, R.Tiling);
 	Vector(TilingXY, FLinearColor(R.TilingXY.X, R.TilingXY.Y, 0, 0));
 	Vector(Offset, FLinearColor(R.Offset.X, R.Offset.Y, 0, 0));
@@ -263,6 +269,17 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	// Grayscale channels
 	UTexture2D* Packed = FindPacked(R);
 	SetTexture(PackedMap, Packed);
+
+	// Height (parallax)
+	{
+		UTexture2D* T = ActiveSlot(R, EGlazeSlot::Height);
+		const bool bFromPacked = T && T == Packed;
+		Switches.Add({ UseMap(EGlazeSlot::Height), T != nullptr });
+		Switches.Add({ FromPacked(EGlazeSlot::Height), bFromPacked });
+		SetTexture(Map(EGlazeSlot::Height), bFromPacked ? nullptr : T);
+		Vector(Channel(EGlazeSlot::Height), ChannelMask(R.HeightChannel));
+		Scalar(HeightRatio, R.HeightRatio);
+	}
 	for (EGlazeSlot Slot : GrayscaleSlots)
 	{
 		UTexture2D* T = ActiveSlot(R, Slot);
@@ -321,6 +338,16 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	Scalar(MacroTiling, R.MacroTiling);
 	Scalar(MacroAmount, R.MacroAmount);
 	Scalar(MacroRoughness, R.MacroRoughness);
+
+	// Wind
+	Switches.Add({ UseWind, R.bWind });
+	Switches.Add({ WindByHeight, R.bWind && R.WindMask == EGlazeWindMask::Height });
+	Switches.Add({ WindByVertexColor, R.bWind && R.WindMask == EGlazeWindMask::VertexColor });
+	Scalar(WindDirection, R.WindDirection);
+	Scalar(WindStrength, R.WindStrength);
+	Scalar(WindSpeed, R.WindSpeed);
+	Scalar(WindGustSize, R.WindGustSize);
+	Scalar(WindHeight, R.WindHeight);
 
 	// Static state: switches + base property overrides. Only a change here needs a recompile.
 	FString Key;
@@ -462,7 +489,7 @@ bool ReadRecipe(const UMaterialInstanceConstant* Instance, UGlazeRecipe& OutReci
 	for (int32 I = 0; I < static_cast<int32>(EGlazeSlot::Num); ++I)
 	{
 		const EGlazeSlot Slot = static_cast<EGlazeSlot>(I);
-		if (Slot == EGlazeSlot::Height || OutRecipe.GetSlot(Slot))
+		if (OutRecipe.GetSlot(Slot))
 		{
 			continue;
 		}

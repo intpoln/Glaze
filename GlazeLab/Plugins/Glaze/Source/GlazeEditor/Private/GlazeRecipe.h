@@ -33,6 +33,30 @@ enum class EGlazeDetailSpace : uint8
 	PreSkinned UMETA(DisplayName = "Pre-Skinned (Skeletal)")
 };
 
+/** How the main textures are mapped onto the mesh. */
+UENUM()
+enum class EGlazeProjection : uint8
+{
+	/** Mesh UVs. */
+	UV,
+	/** Triplanar from world position: no UVs needed, seamless; moving objects slide through the texture. */
+	World UMETA(DisplayName = "World (Triplanar)"),
+	/** Triplanar from object position: sticks to moving / scaled static meshes. */
+	Local UMETA(DisplayName = "Object (Triplanar)")
+};
+
+/** Which vertices the wind moves. */
+UENUM()
+enum class EGlazeWindMask : uint8
+{
+	/** The whole mesh sways the same. */
+	None UMETA(DisplayName = "Whole Mesh"),
+	/** More towards the top of the object: fixed base, swaying tips (grass, bushes, banners on a pole). */
+	Height UMETA(DisplayName = "By Height"),
+	/** Red vertex color: 0 = fixed, 1 = full sway (painted in the mesh). */
+	VertexColor UMETA(DisplayName = "By Vertex Color (Red)")
+};
+
 /** Texture slots Glaze can fill. Order matters: it is the display order of the slot list. */
 enum class EGlazeSlot : uint8
 {
@@ -125,26 +149,40 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Textures")
 	TObjectPtr<UTexture2D> Emissive;
 
-	/** Height is recognized but not used by the material yet. */
-	UPROPERTY(EditAnywhere, Category = "Textures", AdvancedDisplay)
+	/** Parallax: fakes depth by shifting the textures with the view angle (UV projection only). */
+	UPROPERTY(EditAnywhere, Category = "Textures")
 	TObjectPtr<UTexture2D> Height;
+	UPROPERTY(EditAnywhere, Category = "Textures", meta = (DisplayName = "  Height Channel", EditCondition = "Height != nullptr", EditConditionHides))
+	EGlazeChannel HeightChannel = EGlazeChannel::R;
 
 	/** Fix sRGB / compression of the assigned textures so they match their slot (Normal -> Normalmap, grayscale maps -> Masks). Changes the texture assets. */
 	UPROPERTY(EditAnywhere, Category = "Textures")
 	bool bFixTextureSettings = true;
 
 	// ---- UV ----
-	UPROPERTY(EditAnywhere, Category = "UV", meta = (UIMin = "0.01", UIMax = "16"))
+	/** Triplanar needs no UVs (scans on unwrapped or stretched meshes), but samples every texture three times. */
+	UPROPERTY(EditAnywhere, Category = "UV")
+	EGlazeProjection Projection = EGlazeProjection::UV;
+
+	/** Size of one texture tile in centimeters. */
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (DisplayName = "Texture Size", EditCondition = "Projection != EGlazeProjection::UV", EditConditionHides, UIMin = "10", UIMax = "1000", ClampMin = "0.01", Units = "Centimeters"))
+	float TriplanarSize = 100.f;
+
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (EditCondition = "Projection == EGlazeProjection::UV", EditConditionHides, UIMin = "0.01", UIMax = "16"))
 	float Tiling = 1.f;
 
-	UPROPERTY(EditAnywhere, Category = "UV", meta = (DisplayName = "Tiling X/Y"))
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (DisplayName = "Tiling X/Y", EditCondition = "Projection == EGlazeProjection::UV", EditConditionHides))
 	FVector2D TilingXY = FVector2D(1, 1);
 
-	UPROPERTY(EditAnywhere, Category = "UV")
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (EditCondition = "Projection == EGlazeProjection::UV", EditConditionHides))
 	FVector2D Offset = FVector2D::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "UV", meta = (UIMin = "-180", UIMax = "180", Units = "Degrees"))
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (EditCondition = "Projection == EGlazeProjection::UV", EditConditionHides, UIMin = "-180", UIMax = "180", Units = "Degrees"))
 	float Rotation = 0.f;
+
+	/** Parallax depth from the Height map: 0 = flat. Too much smears the texture at grazing angles. */
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (DisplayName = "Parallax Depth", EditCondition = "Height != nullptr && Projection == EGlazeProjection::UV", EditConditionHides, UIMin = "0", UIMax = "0.2"))
+	float HeightRatio = 0.04f;
 
 	// ---- Base Color ----
 	/** Multiplies the base color. Without a Base Color texture this is the color. */
@@ -303,6 +341,33 @@ public:
 	/** Roughness swing of the macro patches. */
 	UPROPERTY(EditAnywhere, Category = "Noise", meta = (DisplayName = "Macro Roughness", EditCondition = "bMacroVariation", EditConditionHides, UIMin = "0", UIMax = "1"))
 	float MacroRoughness = 0.1f;
+
+	// ---- Wind: world position offset, sways the vertices ----
+	UPROPERTY(EditAnywhere, Category = "Wind", meta = (DisplayName = "Wind"))
+	bool bWind = false;
+
+	/** Direction the wind blows to, around the vertical axis: 0 = +X, 90 = +Y. */
+	UPROPERTY(EditAnywhere, Category = "Wind", meta = (DisplayName = "Direction", EditCondition = "bWind", EditConditionHides, UIMin = "-180", UIMax = "180", Units = "Degrees"))
+	float WindDirection = 0.f;
+
+	/** How far the vertices move, in centimeters. */
+	UPROPERTY(EditAnywhere, Category = "Wind", meta = (DisplayName = "Strength", EditCondition = "bWind", EditConditionHides, UIMin = "0", UIMax = "50", Units = "Centimeters"))
+	float WindStrength = 5.f;
+
+	/** Gusts per second. */
+	UPROPERTY(EditAnywhere, Category = "Wind", meta = (DisplayName = "Speed", EditCondition = "bWind", EditConditionHides, UIMin = "0", UIMax = "4"))
+	float WindSpeed = 0.5f;
+
+	/** Distance between gusts in centimeters: neighbours closer than this sway together. */
+	UPROPERTY(EditAnywhere, Category = "Wind", meta = (DisplayName = "Gust Size", EditCondition = "bWind", EditConditionHides, UIMin = "50", UIMax = "5000", ClampMin = "1", Units = "Centimeters"))
+	float WindGustSize = 800.f;
+
+	UPROPERTY(EditAnywhere, Category = "Wind", meta = (DisplayName = "Mask", EditCondition = "bWind", EditConditionHides))
+	EGlazeWindMask WindMask = EGlazeWindMask::Height;
+
+	/** Height above the object's pivot where the sway reaches full strength. */
+	UPROPERTY(EditAnywhere, Category = "Wind", meta = (DisplayName = "Full Sway Height", EditCondition = "bWind && WindMask == EGlazeWindMask::Height", EditConditionHides, UIMin = "10", UIMax = "2000", ClampMin = "0.01", Units = "Centimeters"))
+	float WindHeight = 200.f;
 
 	FOnGlazeRecipeChanged OnChanged;
 

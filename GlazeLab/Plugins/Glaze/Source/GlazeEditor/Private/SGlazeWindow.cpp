@@ -384,10 +384,6 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 	{
 		MatchNotes.Add(FString::Printf(TEXT("Not matched: %s (drag it into a slot)"), *T->GetName()));
 	}
-	if (Recipe->Height)
-	{
-		MatchNotes.Add(TEXT("Height map found: not used by the material yet."));
-	}
 
 	FixTextures();
 	if (!Recipe->OnChanged.IsBoundToObject(this))

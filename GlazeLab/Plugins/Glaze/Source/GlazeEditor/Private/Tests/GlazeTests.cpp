@@ -265,7 +265,9 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	for (const FMaterialParameterInfo& I : Infos) { Names.Add(I.Name); }
 	for (const FName N : TArray<FName>{ Glaze::Param::Tiling, Glaze::Param::Rotation, Glaze::Param::ColorContrast, Glaze::Param::LerpAmount,
 		Glaze::Param::Value(EGlazeSlot::Roughness), Glaze::Param::Max(EGlazeSlot::Roughness), Glaze::Param::OpacityAmount,
-		Glaze::Param::DetailSize, Glaze::Param::DetailRoughness, Glaze::Param::DetailBump, Glaze::Param::MacroSize, Glaze::Param::MacroAmount })
+		Glaze::Param::DetailSize, Glaze::Param::DetailRoughness, Glaze::Param::DetailBump, Glaze::Param::MacroSize, Glaze::Param::MacroAmount,
+		Glaze::Param::TriplanarSize, Glaze::Param::HeightRatio, Glaze::Param::WindDirection, Glaze::Param::WindStrength, Glaze::Param::WindSpeed,
+		Glaze::Param::WindGustSize, Glaze::Param::WindHeight })
 	{
 		TestTrue(*FString::Printf(TEXT("scalar %s"), *N.ToString()), Names.Contains(N));
 	}
@@ -275,13 +277,15 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	for (const FMaterialParameterInfo& I : Infos) { Names.Add(I.Name); }
 	for (const FName N : TArray<FName>{ Glaze::Param::UseMap(EGlazeSlot::BaseColor), Glaze::Param::ColorCorrection, Glaze::Param::FromPacked(EGlazeSlot::Metallic),
 		Glaze::Param::Dithered, Glaze::Param::UseEmissive, Glaze::Param::EmissiveFromBaseColor,
-		Glaze::Param::UseDetail, Glaze::Param::DetailFromTexture, Glaze::Param::DetailUV, Glaze::Param::DetailLocal, Glaze::Param::DetailPreSkinned, Glaze::Param::UseMacro })
+		Glaze::Param::UseDetail, Glaze::Param::DetailFromTexture, Glaze::Param::DetailUV, Glaze::Param::DetailLocal, Glaze::Param::DetailPreSkinned, Glaze::Param::UseMacro,
+		Glaze::Param::Triplanar, Glaze::Param::TriplanarLocal, Glaze::Param::UseMap(EGlazeSlot::Height), Glaze::Param::FromPacked(EGlazeSlot::Height),
+		Glaze::Param::UseWind, Glaze::Param::WindByHeight, Glaze::Param::WindByVertexColor })
 	{
 		TestTrue(*FString::Printf(TEXT("switch %s"), *N.ToString()), Names.Contains(N));
 	}
 
 	Material->GetAllTextureParameterInfo(Infos, Ids);
-	TestEqual(TEXT("texture params: base, normal, packed, 5 grayscale, emissive, detail"), Infos.Num(), 10);
+	TestEqual(TEXT("texture params: base, normal, packed, 5 grayscale, emissive, detail, height"), Infos.Num(), 11);
 	// Masks samplers need linear defaults, or the shader does not compile ("Sampler type is Masks, should be Color").
 	for (const FMaterialParameterInfo& I : Infos)
 	{
@@ -377,6 +381,37 @@ bool FGlazeInstanceTest::RunTest(const FString&)
 
 	TestTrue(TEXT("masked override"), MI->BasePropertyOverrides.bOverride_BlendMode && MI->BasePropertyOverrides.BlendMode == BLEND_Masked);
 
+	// Height in the B channel of the packed map (ORDp): parallax reads the packed map, no own height map.
+	R->Height = Orm;
+	R->HeightChannel = EGlazeChannel::B;
+	ApplyRecipe(MI, *R, Key);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::UseMap(EGlazeSlot::Height)), bValue, Guid);
+	TestTrue(TEXT("parallax on"), bValue);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::FromPacked(EGlazeSlot::Height)), bValue, Guid);
+	TestTrue(TEXT("height from packed"), bValue);
+	TestNull(TEXT("no own height map"), TextureParam(Param::Map(EGlazeSlot::Height)));
+	// Triplanar has no UVs to shift: parallax off.
+	R->Projection = EGlazeProjection::Local;
+	ApplyRecipe(MI, *R, Key);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::Triplanar), bValue, Guid);
+	TestTrue(TEXT("triplanar on"), bValue);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::TriplanarLocal), bValue, Guid);
+	TestTrue(TEXT("triplanar in object space"), bValue);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::UseMap(EGlazeSlot::Height)), bValue, Guid);
+	TestFalse(TEXT("no parallax with triplanar"), bValue);
+	R->Projection = EGlazeProjection::UV;
+	R->Height = nullptr;
+	// Wind by vertex color.
+	R->bWind = true;
+	R->WindMask = EGlazeWindMask::VertexColor;
+	ApplyRecipe(MI, *R, Key);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::WindByVertexColor), bValue, Guid);
+	TestTrue(TEXT("wind by vertex color"), bValue);
+	MI->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(Param::WindByHeight), bValue, Guid);
+	TestFalse(TEXT("not by height"), bValue);
+	R->bWind = false;
+	ApplyRecipe(MI, *R, Key);
+
 	// Same static state: the instance is not touched again.
 	const FString Before = Key;
 	R->LerpAmount = 0.5f;
@@ -421,6 +456,17 @@ bool FGlazeCompileTest::RunTest(const FString&)
 			{ R.bDetailNoise = true; R.DetailNoise = Noise; R.DetailBump = 1.f; R.bMacroVariation = true; } },
 		{ TEXT("macro only, uv"), [](UGlazeRecipe& R) { R.bMacroVariation = true; R.DetailSpace = EGlazeDetailSpace::UV; } },
 		{ TEXT("macro only, pre-skinned"), [](UGlazeRecipe& R) { R.bMacroVariation = true; R.DetailSpace = EGlazeDetailSpace::PreSkinned; } },
+		{ TEXT("triplanar world + masked + emissive map"), [](UGlazeRecipe& R)
+			{ R.Projection = EGlazeProjection::World; R.BlendMode = EGlazeBlend::Masked; R.bEmissive = true; R.Emissive = R.BaseColor; } },
+		{ TEXT("triplanar object + detail bump"), [Noise](UGlazeRecipe& R)
+			{ R.Projection = EGlazeProjection::Local; R.bDetailNoise = true; R.DetailNoise = Noise; R.DetailBump = 1.f; } },
+		{ TEXT("parallax from packed"), [](UGlazeRecipe& R) { R.Height = R.Roughness; R.HeightChannel = EGlazeChannel::B; R.Rotation = 30.f; } },
+		{ TEXT("parallax own map"), [](UGlazeRecipe& R)
+			{ R.Height = R.Roughness; R.Roughness = R.Metallic = R.AmbientOcclusion = nullptr; } },
+		{ TEXT("wind by height"), [](UGlazeRecipe& R) { R.bWind = true; R.WindMask = EGlazeWindMask::Height; } },
+		{ TEXT("wind by vertex color + pre-skinned detail"), [](UGlazeRecipe& R)
+			{ R.bWind = true; R.WindMask = EGlazeWindMask::VertexColor; R.bDetailNoise = true; R.DetailSpace = EGlazeDetailSpace::PreSkinned; } },
+		{ TEXT("wind whole mesh"), [](UGlazeRecipe& R) { R.bWind = true; R.WindMask = EGlazeWindMask::None; } },
 	};
 	for (const FCase& Case : Cases)
 	{
