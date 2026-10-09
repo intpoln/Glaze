@@ -129,6 +129,10 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	// A transient material: the test does not touch /Game. Engine functions must resolve (missing inputs log errors -> fail).
 	UMaterial* Material = NewObject<UMaterial>(GetTransientPackage(), TEXT("M_GlazeTest"), RF_Transient);
 	Glaze::BuildMasterGraph(Material);
+	// A rebuild replaces the graph instead of accumulating old nodes.
+	const int32 NodeCount = Material->GetExpressions().Num();
+	Glaze::BuildMasterGraph(Material);
+	TestEqual(TEXT("rebuild keeps the node count"), Material->GetExpressions().Num(), NodeCount);
 
 	TArray<FMaterialParameterInfo> Infos;
 	TArray<FGuid> Ids;

@@ -4,7 +4,9 @@
 #include "AssetToolsModule.h"
 #include "Engine/Texture2D.h"
 #include "Factories/MaterialFactoryNew.h"
+#include "Editor.h"
 #include "FileHelpers.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionAbs.h"
@@ -93,6 +95,9 @@ namespace
 {
 	const FName MetaVersionKey(TEXT("GlazeMasterVersion"));
 
+	/** Default textures created during this build; EnsureMaster saves them together with the master. */
+	TArray<UPackage*> CreatedDefaultPackages;
+
 	/** White 4x4 linear texture in the project, next to the master: default of the Masks / grayscale map parameters. */
 	UTexture* DefaultLinearTexture(const TCHAR* AssetName, TextureCompressionSettings Compression)
 	{
@@ -111,7 +116,7 @@ namespace
 		Texture->PostEditChange();
 		FAssetRegistryModule::AssetCreated(Texture);
 		Package->MarkPackageDirty();
-		UEditorLoadingAndSavingUtils::SavePackages({ Package }, /*bOnlyDirty*/ false);
+		CreatedDefaultPackages.Add(Package);
 		return Texture;
 	}
 
@@ -366,7 +371,13 @@ namespace
 
 void BuildMasterGraph(UMaterial* Material)
 {
-	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	// DeleteAllMaterialExpressions iterates the live array while removing from it and skips every other node.
+	const TArray<TObjectPtr<UMaterialExpression>> OldExpressions(Material->GetExpressions());
+	for (UMaterialExpression* Expression : OldExpressions)
+	{
+		UMaterialEditingLibrary::DeleteMaterialExpression(Material, Expression);
+	}
+	check(Material->GetExpressions().IsEmpty());
 	FGraph G(Material);
 	UMaterialEditorOnlyData* Out = Material->GetEditorOnlyData();
 
@@ -596,12 +607,23 @@ UMaterial* EnsureMaster(bool bSave)
 	UPackage* Package = Material->GetPackage();
 	FMetaData& Meta = Package->GetMetaData();
 	const int32 Version = FCString::Atoi(*Meta.GetValue(Material, MetaVersionKey));
-	if (Version == MasterVersion)
+	if (Version >= MasterVersion)
 	{
+		if (Version > MasterVersion)
+		{
+			UE_LOG(LogGlazeMaster, Warning, TEXT("%s is version %d, newer than this plugin (%d); using it as is"),
+				MasterPackagePath, Version, MasterVersion);
+		}
 		return Material;
 	}
 
 	UE_LOG(LogGlazeMaster, Display, TEXT("Building %s (version %d -> %d)"), MasterPackagePath, Version, MasterVersion);
+	// An open Material Editor works on its own copy and would write the old graph back on Apply.
+	if (GEditor)
+	{
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Material);
+	}
+	CreatedDefaultPackages.Reset();
 	Material->PreEditChange(nullptr);
 	Material->BlendMode = BLEND_Opaque;
 	for (EMaterialUsage Usage : { MATUSAGE_SkeletalMesh, MATUSAGE_InstancedStaticMeshes, MATUSAGE_SplineMesh, MATUSAGE_GeometryCache, MATUSAGE_NiagaraMeshParticles })
@@ -609,14 +631,20 @@ UMaterial* EnsureMaster(bool bSave)
 		Material->SetUsageByFlag(Usage, true);
 	}
 	BuildMasterGraph(Material);
-	Material->PostEditChange();
 	Meta.SetValue(Material, MetaVersionKey, *LexToString(MasterVersion));
-	Material->MarkPackageDirty();
+	// PostEditChange + update of the loaded child instances (their static permutations) + open editors.
+	UMaterialEditingLibrary::RecompileMaterial(Material);
 
 	if (bSave)
 	{
-		UEditorLoadingAndSavingUtils::SavePackages({ Package }, /*bOnlyDirty*/ false);
+		TArray<UPackage*> Packages = CreatedDefaultPackages;
+		Packages.Add(Package);
+		if (!UEditorLoadingAndSavingUtils::SavePackages(Packages, /*bOnlyDirty*/ false))
+		{
+			UE_LOG(LogGlazeMaster, Error, TEXT("Could not save %s; it will be rebuilt next time"), MasterPackagePath);
+		}
 	}
+	CreatedDefaultPackages.Reset();
 	return Material;
 }
 }

@@ -1,0 +1,28 @@
+#!/bin/bash
+# Parallel read-only Codex reviews: one agent per independent slice of the code base.
+# usage: Tools/review/run_review.sh <out dir>   -> <out dir>/<slice>.md
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+OUT=${1:?out dir}
+mkdir -p "$OUT"
+SRC=GlazeLab/Plugins/Glaze/Source/GlazeEditor/Private
+
+COMMON="Ты ревьюер кода. Проект: Glaze — editor-плагин Unreal Engine 5.8 (C++): пользователь выделяет текстуры -> окно Glaze -> Material Instance от мастер-материала M_Glaze, который плагин генерирует кодом в /Game/Glaze (созданное должно работать в проекте БЕЗ плагина). Приоритеты продукта: скорость, UX, интуитивность. Общий контекст: START_HERE.md, docs/ROADMAP.md, CHECKLIST.md. Движок для сверки API: D:/EGL/UE_5.8/Engine/Source (читай заголовки/исходники, если сомневаешься в поведении API).
+Режим: только чтение, ничего не меняй.
+Ответ на русском, markdown. Для каждой находки: серьёзность (critical/high/medium/low), файл:строка, что не так, конкретный сценарий воспроизведения (входные данные -> что сломается), предлагаемое исправление (кратко). Без воды и без находок «на всякий случай»: если не уверен — пометь «предположение» и объясни, что проверить. В конце — короткий список UX-предложений по своему участку (если есть), отсортированный по пользе. Отдельно отметь утечки памяти / лишние пики памяти / GC-проблемы (UObject без UPROPERTY, сырые указатели, делегаты без отписки и т.п.), если они есть на твоём участке."
+
+run() {
+	local name=$1; shift
+	codex exec -s read-only -C "$ROOT" -o "$OUT/$name.md" "$COMMON
+
+ТВОЙ УЧАСТОК: $*" < /dev/null > "$OUT/$name.log" 2>&1
+	echo "done $name: $(wc -c < "$OUT/$name.md" 2>/dev/null) bytes"
+}
+
+run master "$SRC/GlazeMaster.cpp, $SRC/GlazeMaster.h. Генерация графа мастер-материала. Проверь математику шейдера: поворот UV и обратный поворот нормали, flip green, контраст/ремапы, packed-канал через dot, opacity/dither, emissive, noise-блок (пространства UV/World/Local/Pre-Skinned через VertexInterpolator, triplanar, процедурный Noise, Macro, Detail Bump через DDX/DDY + whiteout-бленд), LWC (world position double), статические свитчи и что невыбранные ветки не компилируются, дубли параметров с одним именем, sampler types и дефолтные текстуры, пересборка мастера по MasterVersion (что будет с существующими инстансами и открытыми редакторами), сохранение пакетов. Также: стоимость шейдера (инструкции/сэмплы) при включённых фичах." &
+run apply "$SRC/GlazeApply.cpp, $SRC/GlazeApply.h, $SRC/GlazeRecipe.h, $SRC/GlazeRecipe.cpp. Запись инстанса: ApplyRecipe (EditorOnly-сеттеры, статический ключ, когда нужен UpdateMaterialInstance, удаление override'ов текстур), FindPacked, PlanTextureFixes/FixTextureSettings (транзакции, undo, что меняется в чужих ассетах), WriteInstanceAsset (создание/переиспользование, сохранение, метаданные с JSON рецепта), ReadRecipe/FromJson (совместимость старых рецептов, битые/удалённые текстуры), имена параметров vs мастер. Сверь, что каждый параметр, который пишет Apply, существует в мастере (GlazeMaster.cpp) и наоборот." &
+run window "$SRC/SGlazeWindow.cpp, $SRC/SGlazeWindow.h, $SRC/GlazeEditorModule.cpp. Slate-окно и интеграция в редактор: жизненный цикл окна и UObject'ов рецепта (GC, AddReferencedObjects/StrongObjectPtr), live preview на выделенных мешах (восстановление материалов при Cancel/закрытии/смене уровня/удалении актёра/undo), батч наборов (Create & Next / Skip / Create All), горячие клавиши, меню Content Browser (ПКМ по текстурам, Edit with Glaze, Add -> Material/Noise from Pack), регистрация/отписка при выгрузке модуля, повторное открытие окна. Здесь главный фокус — UX: пройди сценарии пользователя по коду и найди места, где он запутается, потеряет работу или будет ждать." &
+run matcher "$SRC/GlazeMatcher.cpp, $SRC/GlazeMatcher.h, $SRC/GlazePack.cpp, $SRC/GlazePack.h, плюс GlazeLab/Plugins/Glaze/Resources/Pack/pack.json и структура папок пака (не открывай PNG). Матчер имён текстур (суффиксы BaseColor/Albedo/Diffuse/N/Normal/ORM/ARM/Roughness/Gloss/AO/Metallic/Height/Opacity/Emissive, разрешения 1K/2K/4K, группировка нескольких наборов, регистр, цифры, вложенные подчёркивания, кириллица, коллизии вроде 'Concrete' vs 'Conc_N', 'Normal' внутри имени). Придумай 15-20 реальных имён из Quixel/Poly Haven/ambientCG/Substance и проверь по коду, что получится. Импорт пака: повторный импорт, частично удалённые ассеты, пути, сохранение, настройки сжатия, поведение без pack.json, упакованный плагин (BaseDir в Marketplace/Engine Plugins)." &
+run tests "$SRC/Tests/GlazeTests.cpp, $SRC/../GlazeEditor.Build.cs, GlazeLab/Plugins/Glaze/Glaze.uplugin, Tools/build.sh, Tools/runtests.sh, Tools/package.sh. Качество тестов: что реально проверяется, что пропущено (дыры покрытия по сравнению с фичами в docs/ROADMAP.md и CHECKLIST.md), хрупкие места (тесты пишут в /Game? зависят от порядка?), ложнозелёные проверки. Uplugin/Build.cs: лишние/недостающие зависимости, LoadingPhase, тип модуля (Editor), готовность к упаковке и к переносу на UE 5.7, что попадёт в пакет. Скрипты: ошибки, пути с пробелами, коды возврата." &
+run texgen "Tools/texgen/ (receiver.py, materials.js, package_pack.py, contact_sheet.py; папку Tools/texgen/ptl не читай — это сторонний клон), TexturePack/graphs (выборочно 2-3 файла). Конвейер генерации пака текстур: безопасность локального сервера receiver.py (на что он отвечает, path traversal при /save, привязка к 127.0.0.1), корректность нормалей (DirectX), каналы ORM, бесшовность, повторяемость сборки, понятность для следующего человека. Плюс: идеи, как сделать пак полезнее для пользователей плагина (какие материалы/нойзы добавить)." &
+wait
+echo ALL DONE
