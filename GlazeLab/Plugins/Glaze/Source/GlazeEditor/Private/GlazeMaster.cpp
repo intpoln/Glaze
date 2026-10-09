@@ -18,6 +18,7 @@
 #include "Materials/MaterialExpressionConstant3Vector.h"
 #include "Materials/MaterialExpressionCosine.h"
 #include "Materials/MaterialExpressionCrossProduct.h"
+#include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionDDX.h"
 #include "Materials/MaterialExpressionDDY.h"
 #include "Materials/MaterialExpressionDesaturation.h"
@@ -38,6 +39,7 @@
 #include "Materials/MaterialExpressionSaturate.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionSign.h"
+#include "Materials/MaterialExpressionTextureObjectParameter.h"
 #include "Materials/MaterialExpressionSine.h"
 #include "Materials/MaterialExpressionStaticSwitchParameter.h"
 #include "Materials/MaterialExpressionSubtract.h"
@@ -96,6 +98,7 @@ namespace Param
 	const FName MacroAmount(TEXT("Macro Amount")), MacroRoughness(TEXT("Macro Roughness"));
 	const FName Triplanar(TEXT("Triplanar")), TriplanarLocal(TEXT("Triplanar In Object Space")), TriplanarSize(TEXT("Triplanar Size"));
 	const FName HeightRatio(TEXT("Parallax Depth"));
+	const FName ParallaxSteps(TEXT("Parallax Steps"));
 	const FName UseWind(TEXT("Use Wind")), WindByHeight(TEXT("Wind By Height")), WindByVertexColor(TEXT("Wind By Vertex Color"));
 	const FName WindDirection(TEXT("Wind Direction")), WindStrength(TEXT("Wind Strength")), WindSpeed(TEXT("Wind Speed"));
 	const FName WindGustSize(TEXT("Wind Gust Size")), WindHeight(TEXT("Wind Full Sway Height"));
@@ -426,20 +429,64 @@ void BuildMasterGraph(UMaterial* Material)
 	const FPin OffsetXY = G.Mask(G.Vector(Param::Offset, FLinearColor(0, 0, 0, 0), GroupUV), true, true);
 	const FPin UV0 = G.Add(G.Mul(Rotated, Tiling), OffsetXY);
 
-	// Parallax (Bump Offset math): shift the UVs along the tangent-space view direction by the height. The tangent
-	// frame follows the mesh UVs, so the shift is rotated like the UVs. Depth is relative to one texture tile.
+	// Parallax occlusion: march the view ray down through the Height map in Steps layers and take the UV where it
+	// hits. The tangent frame follows the mesh UVs, so the ray is rotated like the UVs. Depth is relative to one tile.
 	UMaterialExpressionTextureSampleParameter2D* PackedAtUV0 = G.Texture(Param::PackedMap, DefaultMasksTexture, SAMPLERTYPE_Masks, UV0);
 	FPin UV;
 	{
-		UMaterialExpressionTextureSampleParameter2D* HeightTex = G.Texture(Param::Map(EGlazeSlot::Height), DefaultMasksTexture, SAMPLERTYPE_Masks, UV0);
-		const FPin Channel = G.Vector(Param::Channel(EGlazeSlot::Height), FLinearColor(1, 0, 0, 0), GroupUV, OutRGBA);
-		const FPin Height = G.Switch(Param::FromPacked(EGlazeSlot::Height), G.Dot({ PackedAtUV0, OutRGBA }, Channel), G.Dot({ HeightTex, OutRGBA }, Channel), GroupUV);
 		auto* CameraTS = G.New<UMaterialExpressionTransform>();
 		CameraTS->TransformSourceType = TRANSFORMSOURCE_World;
 		CameraTS->TransformType = TRANSFORM_Tangent;
 		Link(CameraTS->Input, { G.New<UMaterialExpressionCameraVectorWS>() });
-		const FPin Depth = G.Mul(G.Sub(Height, G.Const(0.5f)), G.Scalar(Param::HeightRatio, 0.04f, GroupUV, 0.f, 0.2f));
-		UV = G.Switch(Param::UseMap(EGlazeSlot::Height), G.Add(UV0, G.Mul(Rotate(G.Mask({ CameraTS }, true, true)), Depth)), UV0, GroupUV);
+		const FPin Ray = Rotate(G.Mask({ CameraTS }, true, true));
+		const FPin RayZ = G.Mask({ CameraTS }, false, false, true);
+		const FPin Channel = G.Vector(Param::Channel(EGlazeSlot::Height), FLinearColor(1, 0, 0, 0), GroupUV, OutRGBA);
+		const FPin Depth = G.Scalar(Param::HeightRatio, 0.05f, GroupUV, 0.f, 0.3f);
+		const FPin Steps = G.Scalar(Param::ParallaxSteps, 16.f, GroupUV, 1.f, 64.f);
+		auto March = [&](FName Map, int32 SortPriority) -> FPin
+		{
+			auto* Tex = G.New<UMaterialExpressionTextureObjectParameter>();
+			Tex->ParameterName = Map;
+			Tex->Texture = DefaultLinearTexture(TEXT("T_Glaze_DefaultMask"), TC_Masks);
+			Tex->SamplerType = SAMPLERTYPE_Masks;
+			Tex->Group = TEXT("01 Textures");
+			Tex->SortPriority = SortPriority;
+			auto* C = G.New<UMaterialExpressionCustom>();
+			C->Description = TEXT("Glaze Parallax");
+			C->OutputType = CMOT_Float2;
+			C->Code = TEXT(R"(float N = clamp(round(Steps), 1, 64);
+float2 Shift = Ray / max(RayZ, 0.15) * Depth;
+float2 DX = ddx(UV), DY = ddy(UV);
+float Layer = 1.0 / N;
+float Cur = 0, H = 1 - dot(Tex.SampleGrad(TexSampler, UV, DX, DY), Channel);
+float PrevCur = 0, PrevH = H;
+[loop] for (int I = 0; I < 64 && Cur < H; I++)
+{
+	PrevCur = Cur; PrevH = H;
+	Cur += Layer;
+	H = 1 - dot(Tex.SampleGrad(TexSampler, UV - Shift * Cur, DX, DY), Channel);
+}
+float A = H - Cur, B = PrevH - PrevCur;
+float T = A / min(A - B, -1e-5);
+return UV - Shift * clamp(lerp(Cur, PrevCur, T), 0, 1);)");
+			C->Inputs.Reset();
+			for (const TCHAR* Name : { TEXT("Tex"), TEXT("UV"), TEXT("Ray"), TEXT("RayZ"), TEXT("Channel"), TEXT("Depth"), TEXT("Steps") })
+			{
+				FCustomInput& In = C->Inputs.AddDefaulted_GetRef();
+				In.InputName = Name;
+			}
+			Link(C->Inputs[0].Input, { Tex });
+			Link(C->Inputs[1].Input, UV0);
+			Link(C->Inputs[2].Input, Ray);
+			Link(C->Inputs[3].Input, RayZ);
+			Link(C->Inputs[4].Input, Channel);
+			Link(C->Inputs[5].Input, Depth);
+			Link(C->Inputs[6].Input, Steps);
+			return { C };
+		};
+		const FPin Marched = G.Switch(Param::FromPacked(EGlazeSlot::Height), March(Param::PackedMap, PackedAtUV0->SortPriority),
+			March(Param::Map(EGlazeSlot::Height), G.Sort++), GroupUV);
+		UV = G.Switch(Param::UseMap(EGlazeSlot::Height), Marched, UV0, GroupUV);
 	}
 
 	// ---- Triplanar projection of the main textures: three planar samples blended by the normal ----

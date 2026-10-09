@@ -57,7 +57,7 @@ namespace
 		return Name.StartsWith(TEXT("T_Noise_")) ? Name.RightChop(8) : Name;
 	}
 
-	void Notify(const FText& Text, bool bSuccess)
+	void NotifyNoise(const FText& Text, bool bSuccess)
 	{
 		UE_LOG(LogGlazeNoise, Display, TEXT("%s: %s"), bSuccess ? TEXT("OK") : TEXT("FAILED"), *Text.ToString());
 		FNotificationInfo Info(Text);
@@ -313,7 +313,7 @@ void SGlazeNoiseWindow::Select(int32 Index)
 	{
 		SourcePixels.Reset();
 		SourceSize = 0;
-		Notify(FText::Format(LOCTEXT("LoadFailed", "Could not read the pack noise {0}."), FText::FromString(Name)), false);
+		NotifyNoise(FText::Format(LOCTEXT("LoadFailed", "Could not read the pack noise {0}."), FText::FromString(Name)), false);
 	}
 	UpdatePreview();
 }
@@ -390,7 +390,7 @@ FReply SGlazeNoiseWindow::OnCreate()
 	int32 Size = 0;
 	if (!Glaze::Noise::LoadGray(Glaze::Noise::PackFile(Items[Selected]->Name, TargetSize), TargetSize, Pixels, Size))
 	{
-		Notify(LOCTEXT("ReadFailed", "Could not read the pack noise file."), false);
+		NotifyNoise(LOCTEXT("ReadFailed", "Could not read the pack noise file."), false);
 		return FReply::Handled();
 	}
 	const TArray<uint8> Lut = Glaze::Noise::BuildLut(*Settings);
@@ -404,7 +404,7 @@ FReply SGlazeNoiseWindow::OnCreate()
 	const FString Name = FPaths::MakeValidFileName(Settings->AssetName.TrimStartAndEnd(), TEXT('_'));
 	if (Name.IsEmpty() || !FPackageName::IsValidLongPackageName(Folder / Name))
 	{
-		Notify(LOCTEXT("BadName", "Pick a name and a folder under /Game."), false);
+		NotifyNoise(LOCTEXT("BadName", "Pick a name and a folder under /Game."), false);
 		return FReply::Handled();
 	}
 	FString Path = Folder / Name;
@@ -419,7 +419,7 @@ FReply SGlazeNoiseWindow::OnCreate()
 	UTexture2D* Texture = Glaze::Noise::CreateTextureAsset(Pixels, Size, Path, Error, Settings->bSRGB);
 	if (!Texture || !Error.IsEmpty())
 	{
-		Notify(FText::FromString(Error), false);
+		NotifyNoise(FText::FromString(Error), false);
 		if (!Texture)
 		{
 			return FReply::Handled();
@@ -427,7 +427,7 @@ FReply SGlazeNoiseWindow::OnCreate()
 	}
 	else
 	{
-		Notify(FText::Format(LOCTEXT("Created", "Created {0}"), FText::FromString(FPackageName::GetShortName(Path))), true);
+		NotifyNoise(FText::Format(LOCTEXT("Created", "Created {0}"), FText::FromString(FPackageName::GetShortName(Path))), true);
 	}
 	LastCreated = Texture->GetPathName();
 	if (GEditor)

@@ -283,7 +283,7 @@ bool FGlazeMasterTest::RunTest(const FString&)
 	for (const FName N : TArray<FName>{ Glaze::Param::Tiling, Glaze::Param::Rotation, Glaze::Param::ColorContrast, Glaze::Param::LerpAmount,
 		Glaze::Param::Value(EGlazeSlot::Roughness), Glaze::Param::Max(EGlazeSlot::Roughness), Glaze::Param::OpacityAmount,
 		Glaze::Param::DetailSize, Glaze::Param::DetailRoughness, Glaze::Param::DetailBump, Glaze::Param::MacroSize, Glaze::Param::MacroAmount,
-		Glaze::Param::TriplanarSize, Glaze::Param::HeightRatio, Glaze::Param::WindDirection, Glaze::Param::WindStrength, Glaze::Param::WindSpeed,
+		Glaze::Param::TriplanarSize, Glaze::Param::HeightRatio, Glaze::Param::ParallaxSteps, Glaze::Param::WindDirection, Glaze::Param::WindStrength, Glaze::Param::WindSpeed,
 		Glaze::Param::WindGustSize, Glaze::Param::WindHeight })
 	{
 		TestTrue(*FString::Printf(TEXT("scalar %s"), *N.ToString()), Names.Contains(N));

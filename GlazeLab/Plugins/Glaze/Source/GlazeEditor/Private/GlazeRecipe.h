@@ -180,9 +180,13 @@ public:
 	UPROPERTY(EditAnywhere, Category = "UV", meta = (EditCondition = "Projection == EGlazeProjection::UV", EditConditionHides, UIMin = "-180", UIMax = "180", Units = "Degrees"))
 	float Rotation = 0.f;
 
-	/** Parallax depth from the Height map: 0 = flat. Too much smears the texture at grazing angles. */
-	UPROPERTY(EditAnywhere, Category = "UV", meta = (DisplayName = "Parallax Depth", EditCondition = "Height != nullptr && Projection == EGlazeProjection::UV", EditConditionHides, UIMin = "0", UIMax = "0.2"))
-	float HeightRatio = 0.04f;
+	/** Parallax depth from the Height map, as a fraction of one texture tile: 0 = flat. White in the map is the surface, black is deepest. */
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (DisplayName = "Parallax Depth", EditCondition = "Height != nullptr && Projection == EGlazeProjection::UV", EditConditionHides, UIMin = "0", UIMax = "0.3", ClampMin = "0"))
+	float HeightRatio = 0.05f;
+
+	/** Parallax quality: layers the view ray is traced through. More = cleaner edges at grazing angles, but costlier (up to that many Height samples per pixel). */
+	UPROPERTY(EditAnywhere, Category = "UV", meta = (DisplayName = "Parallax Steps", EditCondition = "Height != nullptr && Projection == EGlazeProjection::UV", EditConditionHides, UIMin = "1", UIMax = "64", ClampMin = "1", ClampMax = "64"))
+	int32 ParallaxSteps = 16;
 
 	// ---- Base Color ----
 	/** Multiplies the base color. Without a Base Color texture this is the color. */

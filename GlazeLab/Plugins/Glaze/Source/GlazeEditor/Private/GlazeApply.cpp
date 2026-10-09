@@ -289,6 +289,7 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 		SetTexture(Map(EGlazeSlot::Height), bFromPacked ? nullptr : T);
 		Vector(Channel(EGlazeSlot::Height), ChannelMask(R.HeightChannel));
 		Scalar(HeightRatio, R.HeightRatio);
+		Scalar(ParallaxSteps, float(R.ParallaxSteps));
 	}
 	for (EGlazeSlot Slot : GrayscaleSlots)
 	{
