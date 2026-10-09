@@ -26,6 +26,9 @@ namespace Glaze
 	/** Rebuilds the expression graph of Material (clears existing expressions). Exposed for tests. */
 	void BuildMasterGraph(UMaterial* Material);
 
+	/** Turns on the usages of the master (skeletal, instanced, spline, geometry cache, Niagara meshes). */
+	void SetMasterUsages(UMaterial* Material);
+
 	bool IsGlazeMaster(const UObject* Material);
 
 	/** Parameter names shared by the master builder and the instance writer. */

@@ -457,7 +457,7 @@ bool FGlazeCompileTest::RunTest(const FString&)
 {
 	using namespace Glaze;
 	UMaterial* Material = NewObject<UMaterial>(GetTransientPackage(), TEXT("M_GlazeCompileTest"), RF_Transient);
-	Material->SetUsageByFlag(MATUSAGE_SkeletalMesh, true);
+	SetMasterUsages(Material);
 	BuildMasterGraph(Material);
 	Material->PostEditChange();
 

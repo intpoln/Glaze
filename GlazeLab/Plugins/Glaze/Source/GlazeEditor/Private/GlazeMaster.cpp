@@ -1,5 +1,7 @@
 #include "GlazeMaster.h"
 
+#include "Runtime/Launch/Resources/Version.h"
+
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "Engine/Texture2D.h"
@@ -775,6 +777,23 @@ TArray<UPackage*> DirtyMasterPackages()
 	return Packages;
 }
 
+void SetMasterUsages(UMaterial* Material)
+{
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+	for (EMaterialUsage Usage : { MATUSAGE_SkeletalMesh, MATUSAGE_InstancedStaticMeshes, MATUSAGE_SplineMesh, MATUSAGE_GeometryCache, MATUSAGE_NiagaraMeshParticles })
+	{
+		Material->SetUsageByFlag(Usage, true);
+	}
+#else
+	// SetUsageByFlag is private before UE 5.8.
+	Material->bUsedWithSkeletalMesh = true;
+	Material->bUsedWithInstancedStaticMeshes = true;
+	Material->bUsedWithSplineMeshes = true;
+	Material->bUsedWithGeometryCache = true;
+	Material->bUsedWithNiagaraMeshParticles = true;
+#endif
+}
+
 UMaterial* EnsureMaster(bool bSave, FString* OutError)
 {
 	auto Fail = [OutError](const FString& Error) -> UMaterial*
@@ -827,10 +846,7 @@ UMaterial* EnsureMaster(bool bSave, FString* OutError)
 	CreatedDefaultPackages.Reset();
 	Material->PreEditChange(nullptr);
 	Material->BlendMode = BLEND_Opaque;
-	for (EMaterialUsage Usage : { MATUSAGE_SkeletalMesh, MATUSAGE_InstancedStaticMeshes, MATUSAGE_SplineMesh, MATUSAGE_GeometryCache, MATUSAGE_NiagaraMeshParticles })
-	{
-		Material->SetUsageByFlag(Usage, true);
-	}
+	SetMasterUsages(Material);
 	BuildMasterGraph(Material);
 	Meta.SetValue(Material, MetaVersionKey, *LexToString(MasterVersion));
 	// PostEditChange + update of the loaded child instances (their static permutations) + open editors.
