@@ -78,7 +78,7 @@ Turn any texture set into a ready Material Instance in one window: auto map matc
 
 Обе сборки сделаны через `RunUAT BuildPlugin` без ошибок и предупреждений (`Tools/package.sh 5.7` / `5.8`). Пакет 5.7 дополнительно проверен в чистом проекте UE 5.7: все 7 автотестов Glaze прошли, включая компиляцию шейдеров на GPU.
 
-`packages/` не в git: zip и сборки лежат только локально на этой машине.
+Собранные плагины (`packages/5.7/Glaze`, `packages/5.8/Glaze`) лежат в git. Zip для Fab больше 100 МБ, поэтому они не в git, а в релизе GitHub: https://github.com/intpoln/Glaze/releases/tag/v0.1.0 (локально — `packages/*.zip`). После пересборки загрузить новые zip в новый релиз: `gh release create vX.Y.Z packages/Glaze_5.7_source.zip packages/Glaze_5.8_source.zip`.
 
 ### Картинки (1920×1080, PNG)
 
