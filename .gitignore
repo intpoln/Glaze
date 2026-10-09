@@ -8,4 +8,10 @@ TexturePack/raw/
 GlazeLab/Content/Glaze/
 GlazeLab/Content/Collections/
 GlazeLab/Content/Developers/
-packages/
+# Compiled plugins are kept in git (packages/<engine>/Glaze); Fab zips go to GitHub Releases.
+packages/*.zip
+packages/*/package_log.txt
+packages/*/Glaze.new/
+packages/*/Glaze.old/
+packages/*/Glaze/Intermediate/
+!packages/*/Glaze/Binaries/

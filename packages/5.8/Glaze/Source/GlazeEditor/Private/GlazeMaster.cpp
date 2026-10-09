@@ -1,0 +1,868 @@
+#include "GlazeMaster.h"
+
+#include "Runtime/Launch/Resources/Version.h"
+
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
+#include "Engine/Texture2D.h"
+#include "Factories/MaterialFactoryNew.h"
+#include "Editor.h"
+#include "FileHelpers.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "MaterialEditingLibrary.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionAbs.h"
+#include "Materials/MaterialExpressionAdd.h"
+#include "Materials/MaterialExpressionAppendVector.h"
+#include "Materials/MaterialExpressionCameraVectorWS.h"
+#include "Materials/MaterialExpressionComponentMask.h"
+#include "Materials/MaterialExpressionConstant.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
+#include "Materials/MaterialExpressionCosine.h"
+#include "Materials/MaterialExpressionCrossProduct.h"
+#include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialExpressionDDX.h"
+#include "Materials/MaterialExpressionDDY.h"
+#include "Materials/MaterialExpressionDesaturation.h"
+#include "Materials/MaterialExpressionDivide.h"
+#include "Materials/MaterialExpressionDotProduct.h"
+#include "Materials/MaterialExpressionFunctionInput.h"
+#include "Materials/MaterialExpressionLinearInterpolate.h"
+#include "Materials/MaterialExpressionLocalPosition.h"
+#include "Materials/MaterialExpressionTransformPosition.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionMax.h"
+#include "Materials/MaterialExpressionMultiply.h"
+#include "Materials/MaterialExpressionNoise.h"
+#include "Materials/MaterialExpressionNormalize.h"
+#include "Materials/MaterialExpressionOneMinus.h"
+#include "Materials/MaterialExpressionPreSkinnedNormal.h"
+#include "Materials/MaterialExpressionPreSkinnedPosition.h"
+#include "Materials/MaterialExpressionSaturate.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionSign.h"
+#include "Materials/MaterialExpressionTextureObjectParameter.h"
+#include "Materials/MaterialExpressionSine.h"
+#include "Materials/MaterialExpressionStaticSwitchParameter.h"
+#include "Materials/MaterialExpressionSubtract.h"
+#include "Materials/MaterialExpressionTime.h"
+#include "Materials/MaterialExpressionTextureCoordinate.h"
+#include "Materials/MaterialExpressionTextureSampleParameter2D.h"
+#include "Materials/MaterialExpressionTransform.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionVertexColor.h"
+#include "Materials/MaterialExpressionVertexInterpolator.h"
+#include "Materials/MaterialExpressionVertexNormalWS.h"
+#include "Materials/MaterialExpressionWorldPosition.h"
+#include "Materials/MaterialFunctionInterface.h"
+#include "UObject/MetaData.h"
+#include "UObject/Package.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogGlazeMaster, Log, All);
+
+namespace Glaze
+{
+const TCHAR* MasterPackagePath = TEXT("/Game/Glaze/M_Glaze");
+const TCHAR* MasterObjectPath = TEXT("/Game/Glaze/M_Glaze.M_Glaze");
+
+namespace Param
+{
+	static FName Slotted(const TCHAR* Prefix, EGlazeSlot Slot, const TCHAR* Suffix)
+	{
+		return FName(FString(Prefix) + SlotName(Slot) + Suffix);
+	}
+	FName UseMap(EGlazeSlot Slot)     { return Slotted(TEXT("Use "), Slot, TEXT(" Map")); }
+	FName FromPacked(EGlazeSlot Slot) { return Slotted(TEXT(""), Slot, TEXT(" From Packed")); }
+	FName Map(EGlazeSlot Slot)        { return Slotted(TEXT(""), Slot, TEXT(" Map")); }
+	FName Channel(EGlazeSlot Slot)    { return Slotted(TEXT(""), Slot, TEXT(" Channel")); }
+	FName Value(EGlazeSlot Slot)      { return Slotted(TEXT(""), Slot, TEXT("")); }
+	FName Invert(EGlazeSlot Slot)     { return Slotted(TEXT(""), Slot, TEXT(" Invert")); }
+	FName Contrast(EGlazeSlot Slot)   { return Slotted(TEXT(""), Slot, TEXT(" Contrast")); }
+	FName Bias(EGlazeSlot Slot)       { return Slotted(TEXT(""), Slot, TEXT(" Bias")); }
+	FName Min(EGlazeSlot Slot)        { return Slotted(TEXT(""), Slot, TEXT(" Min")); }
+	FName Max(EGlazeSlot Slot)        { return Slotted(TEXT(""), Slot, TEXT(" Max")); }
+
+	const FName PackedMap(TEXT("Packed Map"));
+	const FName Tiling(TEXT("Tiling")), TilingXY(TEXT("Tiling XY")), Offset(TEXT("UV Offset")), Rotation(TEXT("UV Rotation"));
+	const FName Tint(TEXT("Tint")), ColorCorrection(TEXT("Color Correction")), Desaturation(TEXT("Desaturation"));
+	const FName ColorContrast(TEXT("Contrast")), Brightness(TEXT("Brightness")), HueShift(TEXT("Hue Shift"));
+	const FName OverlayColor(TEXT("Overlay Color")), OverlayAmount(TEXT("Overlay Amount"));
+	const FName LerpColor(TEXT("Lerp Color")), LerpAmount(TEXT("Lerp Amount"));
+	const FName NormalStrength(TEXT("Normal Strength")), FlipGreen(TEXT("Flip Green"));
+	const FName UseOpacity(TEXT("Use Opacity")), OpacityAmount(TEXT("Opacity Amount")), Dithered(TEXT("Dithered Opacity"));
+	const FName UseEmissive(TEXT("Use Emissive")), EmissiveFromBaseColor(TEXT("Emissive From Base Color")), EmissiveColor(TEXT("Emissive Color")), EmissiveIntensity(TEXT("Emissive Intensity"));
+	const FName UseDetail(TEXT("Use Detail Noise")), DetailFromTexture(TEXT("Detail Noise From Texture")), DetailUV(TEXT("Detail In UV Space"));
+	const FName DetailLocal(TEXT("Detail In Local Space")), DetailPreSkinned(TEXT("Detail In Pre-Skinned Space")), DetailMap(TEXT("Detail Noise Map"));
+	const FName DetailTiling(TEXT("Detail Tiling")), DetailSize(TEXT("Detail Size")), DetailContrast(TEXT("Detail Contrast")), DetailBias(TEXT("Detail Bias"));
+	const FName UseDetailBump(TEXT("Use Detail Bump"));
+	const FName DetailColor(TEXT("Detail Color")), DetailColorAmount(TEXT("Detail Color Amount")), DetailRoughness(TEXT("Detail Roughness")), DetailBump(TEXT("Detail Bump"));
+	const FName UseMacro(TEXT("Use Macro Variation")), MacroSize(TEXT("Macro Size")), MacroTiling(TEXT("Macro Tiling"));
+	const FName MacroAmount(TEXT("Macro Amount")), MacroRoughness(TEXT("Macro Roughness"));
+	const FName Triplanar(TEXT("Triplanar")), TriplanarLocal(TEXT("Triplanar In Object Space")), TriplanarSize(TEXT("Triplanar Size"));
+	const FName HeightRatio(TEXT("Parallax Depth"));
+	const FName ParallaxSteps(TEXT("Parallax Steps"));
+	const FName UseWind(TEXT("Use Wind")), WindByHeight(TEXT("Wind By Height")), WindByVertexColor(TEXT("Wind By Vertex Color"));
+	const FName WindDirection(TEXT("Wind Direction")), WindStrength(TEXT("Wind Strength")), WindSpeed(TEXT("Wind Speed"));
+	const FName WindGustSize(TEXT("Wind Gust Size")), WindHeight(TEXT("Wind Full Sway Height"));
+}
+
+namespace
+{
+	const FName MetaVersionKey(TEXT("GlazeMasterVersion"));
+
+	/** Default textures created during this build; EnsureMaster saves them together with the master. */
+	TArray<UPackage*> CreatedDefaultPackages;
+
+	/** White 4x4 linear texture in the project, next to the master: default of the Masks / grayscale map parameters. */
+	UTexture* DefaultLinearTexture(const TCHAR* AssetName, TextureCompressionSettings Compression)
+	{
+		const FString PackageName = FString(TEXT("/Game/Glaze/")) + AssetName;
+		if (UTexture2D* Existing = LoadObject<UTexture2D>(nullptr, *(PackageName + TEXT(".") + AssetName), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			return Existing;
+		}
+		UPackage* Package = CreatePackage(*PackageName);
+		UTexture2D* Texture = NewObject<UTexture2D>(Package, AssetName, RF_Public | RF_Standalone);
+		TArray<uint8> Pixels;
+		Pixels.Init(255, 4 * 4 * 4);
+		Texture->Source.Init(4, 4, 1, 1, TSF_BGRA8, Pixels.GetData());
+		Texture->CompressionSettings = Compression;
+		Texture->SRGB = false;
+		Texture->PostEditChange();
+		FAssetRegistryModule::AssetCreated(Texture);
+		Package->MarkPackageDirty();
+		CreatedDefaultPackages.Add(Package);
+		return Texture;
+	}
+
+	/** One output of an expression. */
+	struct FPin
+	{
+		UMaterialExpression* E = nullptr;
+		int32 Out = 0;
+	};
+
+	// Texture sample / vector parameter output indices: RGB, R, G, B, A, RGBA.
+	constexpr int32 OutRGB = 0, OutRGBA = 5;
+
+	void Link(FExpressionInput& Input, const FPin& Pin)
+	{
+		if (Pin.E)
+		{
+			Input.Connect(Pin.Out, Pin.E);
+		}
+	}
+
+	/** Small builder so the graph below reads like the math it computes. Layout is done at the end. */
+	class FGraph
+	{
+	public:
+		explicit FGraph(UMaterial* InMaterial) : M(InMaterial) {}
+
+		template <class T>
+		T* New()
+		{
+			return CastChecked<T>(UMaterialEditingLibrary::CreateMaterialExpression(M, T::StaticClass()));
+		}
+
+		FPin Const(float V)
+		{
+			auto* E = New<UMaterialExpressionConstant>();
+			E->R = V;
+			return { E };
+		}
+		FPin Const3(const FLinearColor& V)
+		{
+			auto* E = New<UMaterialExpressionConstant3Vector>();
+			E->Constant = V;
+			return { E };
+		}
+		FPin Scalar(FName Name, float Default, const TCHAR* Group, float SliderMin = 0.f, float SliderMax = 0.f)
+		{
+			auto* E = New<UMaterialExpressionScalarParameter>();
+			E->ParameterName = Name;
+			E->DefaultValue = Default;
+			E->Group = Group;
+			E->SortPriority = Sort++;
+			E->SliderMin = SliderMin;
+			E->SliderMax = SliderMax;
+			return { E };
+		}
+		/** Vector parameter; Out = RGB (0) or RGBA (5). */
+		FPin Vector(FName Name, const FLinearColor& Default, const TCHAR* Group, int32 Out = OutRGB)
+		{
+			auto* E = New<UMaterialExpressionVectorParameter>();
+			E->ParameterName = Name;
+			E->DefaultValue = Default;
+			E->Group = Group;
+			E->SortPriority = Sort++;
+			return { E, Out };
+		}
+		UMaterialExpressionTextureSampleParameter2D* Texture(FName Name, const TCHAR* DefaultPath, EMaterialSamplerType Type, const FPin& UV)
+		{
+			auto* E = New<UMaterialExpressionTextureSampleParameter2D>();
+			E->ParameterName = Name;
+			// Linear samplers need a linear default: engine white textures are sRGB and fail to compile there.
+			switch (Type)
+			{
+			case SAMPLERTYPE_Masks:           E->Texture = DefaultLinearTexture(TEXT("T_Glaze_DefaultMask"), TC_Masks); break;
+			case SAMPLERTYPE_LinearGrayscale: E->Texture = DefaultLinearTexture(TEXT("T_Glaze_DefaultGray"), TC_Grayscale); break;
+			default:                          E->Texture = LoadObject<UTexture>(nullptr, DefaultPath); break;
+			}
+			E->SamplerType = Type;
+			E->SamplerSource = SSM_Wrap_WorldGroupSettings; // shared samplers: no 16-sampler limit
+			E->Group = TEXT("01 Textures");
+			E->SortPriority = Sort++;
+			Link(E->Coordinates, UV);
+			return E;
+		}
+		FPin Switch(FName Name, const FPin& True, const FPin& False, const TCHAR* Group)
+		{
+			auto* E = New<UMaterialExpressionStaticSwitchParameter>();
+			E->ParameterName = Name;
+			E->DefaultValue = false;
+			E->Group = Group;
+			E->SortPriority = Sort++;
+			Link(E->A, True);
+			Link(E->B, False);
+			return { E };
+		}
+
+		template <class T>
+		FPin Binary(const FPin& A, const FPin& B)
+		{
+			auto* E = New<T>();
+			Link(E->A, A);
+			Link(E->B, B);
+			return { E };
+		}
+		FPin Add(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionAdd>(A, B); }
+		FPin Sub(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionSubtract>(A, B); }
+		FPin Mul(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionMultiply>(A, B); }
+		FPin Div(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionDivide>(A, B); }
+		FPin Cross(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionCrossProduct>(A, B); }
+		template <class T>
+		FPin Unary(const FPin& A, FExpressionInput T::*Input)
+		{
+			auto* E = New<T>();
+			Link(E->*Input, A);
+			return { E };
+		}
+		FPin DDX(const FPin& A) { return Unary(A, &UMaterialExpressionDDX::Value); }
+		FPin DDY(const FPin& A) { return Unary(A, &UMaterialExpressionDDY::Value); }
+		FPin Sign(const FPin& A) { return Unary(A, &UMaterialExpressionSign::Input); }
+		FPin Normalize(const FPin& A) { return Unary(A, &UMaterialExpressionNormalize::VectorInput); }
+		/** Procedural gradient noise within [0, 1]; Position is already scaled. */
+		FPin Noise(const FPin& Position, int32 Levels)
+		{
+			auto* E = New<UMaterialExpressionNoise>();
+			E->Scale = 1.f;
+			E->NoiseFunction = NOISEFUNCTION_GradientTex3D;
+			E->Levels = Levels;
+			// Octaves are summed with weights 1, 1/2, 1/4...: rescale that sum from [-Total, Total] (mapped to 0..1 by the
+			// node as Sum * 0.5 + 0.5) back into [0, 1].
+			E->bTurbulence = false;
+			const float Total = 2.f - FMath::Pow(2.f, 1.f - Levels);
+			E->OutputMin = 0.5f - 0.5f / Total;
+			E->OutputMax = 0.5f + 0.5f / Total;
+			Link(E->Position, Position);
+			return { E };
+		}
+		FPin Max(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionMax>(A, B); }
+		FPin Dot(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionDotProduct>(A, B); }
+		FPin Append(const FPin& A, const FPin& B) { return Binary<UMaterialExpressionAppendVector>(A, B); }
+
+		FPin Lerp(const FPin& A, const FPin& B, const FPin& Alpha)
+		{
+			auto* E = New<UMaterialExpressionLinearInterpolate>();
+			Link(E->A, A);
+			Link(E->B, B);
+			Link(E->Alpha, Alpha);
+			return { E };
+		}
+		FPin OneMinus(const FPin& A)
+		{
+			auto* E = New<UMaterialExpressionOneMinus>();
+			Link(E->Input, A);
+			return { E };
+		}
+		FPin Abs(const FPin& A)
+		{
+			auto* E = New<UMaterialExpressionAbs>();
+			Link(E->Input, A);
+			return { E };
+		}
+		/** Passes a vertex-shader-only value (pre-skinned data) to the pixel shader. */
+		FPin Interpolate(const FPin& A)
+		{
+			auto* E = New<UMaterialExpressionVertexInterpolator>();
+			Link(E->Input, A);
+			return { E };
+		}
+		FPin Saturate(const FPin& A)
+		{
+			auto* E = New<UMaterialExpressionSaturate>();
+			Link(E->Input, A);
+			return { E };
+		}
+		FPin Mask(const FPin& A, bool R, bool G, bool B = false, bool Alpha = false)
+		{
+			auto* E = New<UMaterialExpressionComponentMask>();
+			Link(E->Input, A);
+			E->R = R;
+			E->G = G;
+			E->B = B;
+			E->A = Alpha;
+			return { E };
+		}
+		/** Sine / cosine of an angle in degrees. */
+		FPin SinDeg(const FPin& A) { return Sin(A, 360.f); }
+		/** Sine with the given period (1 = one cycle per unit). */
+		FPin Sin(const FPin& A, float Period)
+		{
+			auto* E = New<UMaterialExpressionSine>();
+			Link(E->Input, A);
+			E->Period = Period;
+			return { E };
+		}
+		FPin CosDeg(const FPin& A)
+		{
+			auto* E = New<UMaterialExpressionCosine>();
+			Link(E->Input, A);
+			E->Period = 360.f;
+			return { E };
+		}
+		FPin Desaturate(const FPin& A, const FPin& Fraction)
+		{
+			auto* E = New<UMaterialExpressionDesaturation>();
+			Link(E->Input, A);
+			Link(E->Fraction, Fraction);
+			return { E };
+		}
+		/** Calls an engine material function; inputs are matched by name. Engine content exists in every project. */
+		FPin Call(const TCHAR* FunctionPath, const TArray<TPair<FString, FPin>>& Inputs)
+		{
+			auto* E = New<UMaterialExpressionMaterialFunctionCall>();
+			UMaterialFunctionInterface* Function = LoadObject<UMaterialFunctionInterface>(nullptr, FunctionPath);
+			if (!Function)
+			{
+				UE_LOG(LogGlazeMaster, Error, TEXT("Missing engine material function %s"), FunctionPath);
+				return {};
+			}
+			E->SetMaterialFunction(Function);
+			for (const TPair<FString, FPin>& In : Inputs)
+			{
+				FFunctionExpressionInput* Found = E->FunctionInputs.FindByPredicate([&In](const FFunctionExpressionInput& F)
+				{
+					return F.ExpressionInput && F.ExpressionInput->InputName.ToString().Equals(In.Key, ESearchCase::IgnoreCase);
+				});
+				if (Found)
+				{
+					Link(Found->Input, In.Value);
+				}
+				else
+				{
+					UE_LOG(LogGlazeMaster, Error, TEXT("%s has no input '%s'"), FunctionPath, *In.Key);
+				}
+			}
+			return { E };
+		}
+
+		UMaterial* M;
+		int32 Sort = 0;
+	};
+
+	const TCHAR* GroupOf(EGlazeSlot Slot)
+	{
+		switch (Slot)
+		{
+		case EGlazeSlot::Roughness:        return TEXT("05 Roughness");
+		case EGlazeSlot::Metallic:         return TEXT("06 Metallic");
+		case EGlazeSlot::Specular:         return TEXT("07 Specular");
+		case EGlazeSlot::AmbientOcclusion: return TEXT("08 Ambient Occlusion");
+		case EGlazeSlot::Opacity:          return TEXT("09 Opacity");
+		default:                           return TEXT("10 Other");
+		}
+	}
+
+	const TCHAR* DefaultColorTexture = TEXT("/Engine/EngineResources/DefaultTexture.DefaultTexture");
+	const TCHAR* DefaultNormalTexture = TEXT("/Engine/EngineMaterials/DefaultNormal.DefaultNormal");
+	const TCHAR* DefaultMasksTexture = TEXT("/Game/Glaze/T_Glaze_DefaultMask.T_Glaze_DefaultMask");
+}
+
+void BuildMasterGraph(UMaterial* Material)
+{
+	// DeleteAllMaterialExpressions iterates the live array while removing from it and skips every other node.
+	const TArray<TObjectPtr<UMaterialExpression>> OldExpressions(Material->GetExpressions());
+	for (UMaterialExpression* Expression : OldExpressions)
+	{
+		UMaterialEditingLibrary::DeleteMaterialExpression(Material, Expression);
+	}
+	check(Material->GetExpressions().IsEmpty());
+	FGraph G(Material);
+	UMaterialEditorOnlyData* Out = Material->GetEditorOnlyData();
+
+	// ---- Positions and normals of the 3D spaces (triplanar, noise, wind) ----
+	auto* NormalWS = G.New<UMaterialExpressionVertexNormalWS>();
+	auto* WorldPos = G.New<UMaterialExpressionWorldPosition>();
+	WorldPos->WorldPositionShaderOffset = WPT_ExcludeAllShaderOffsets; // no swimming once WPO is used
+	auto* LocalPos = G.New<UMaterialExpressionLocalPosition>();
+	LocalPos->IncludedOffsets = EPositionIncludedOffsets::ExcludeOffsets;
+	auto* NormalLocal = G.New<UMaterialExpressionTransform>();
+	NormalLocal->TransformSourceType = TRANSFORMSOURCE_World;
+	NormalLocal->TransformType = TRANSFORM_Local;
+	Link(NormalLocal->Input, { NormalWS });
+
+	// ---- UV: rotate around the tile center, then tile and offset ----
+	const TCHAR* GroupUV = TEXT("02 UV");
+	auto* TexCoord = G.New<UMaterialExpressionTextureCoordinate>();
+	const FPin Angle = G.Scalar(Param::Rotation, 0.f, GroupUV, -180.f, 180.f);
+	const FPin Sin = G.SinDeg(Angle);
+	const FPin Cos = G.CosDeg(Angle);
+	auto Rotate = [&](const FPin& V) -> FPin
+	{
+		const FPin X = G.Mask(V, true, false);
+		const FPin Y = G.Mask(V, false, true);
+		return G.Append(G.Sub(G.Mul(X, Cos), G.Mul(Y, Sin)), G.Add(G.Mul(X, Sin), G.Mul(Y, Cos)));
+	};
+	const FPin Rotated = G.Add(Rotate(G.Sub({ TexCoord }, G.Const(0.5f))), G.Const(0.5f));
+	const FPin TilingXY = G.Mask(G.Vector(Param::TilingXY, FLinearColor(1, 1, 0, 0), GroupUV), true, true);
+	const FPin Tiling = G.Mul(TilingXY, G.Scalar(Param::Tiling, 1.f, GroupUV, 0.01f, 16.f));
+	const FPin OffsetXY = G.Mask(G.Vector(Param::Offset, FLinearColor(0, 0, 0, 0), GroupUV), true, true);
+	const FPin UV0 = G.Add(G.Mul(Rotated, Tiling), OffsetXY);
+
+	// Parallax occlusion: march the view ray down through the Height map in Steps layers and take the UV where it
+	// hits. The tangent frame follows the mesh UVs, so the ray is rotated like the UVs. Depth is relative to one tile.
+	UMaterialExpressionTextureSampleParameter2D* PackedAtUV0 = G.Texture(Param::PackedMap, DefaultMasksTexture, SAMPLERTYPE_Masks, UV0);
+	FPin UV;
+	{
+		auto* CameraTS = G.New<UMaterialExpressionTransform>();
+		CameraTS->TransformSourceType = TRANSFORMSOURCE_World;
+		CameraTS->TransformType = TRANSFORM_Tangent;
+		Link(CameraTS->Input, { G.New<UMaterialExpressionCameraVectorWS>() });
+		const FPin Ray = Rotate(G.Mask({ CameraTS }, true, true));
+		const FPin RayZ = G.Mask({ CameraTS }, false, false, true);
+		const FPin Channel = G.Vector(Param::Channel(EGlazeSlot::Height), FLinearColor(1, 0, 0, 0), GroupUV, OutRGBA);
+		const FPin Depth = G.Scalar(Param::HeightRatio, 0.05f, GroupUV, 0.f, 0.3f);
+		const FPin Steps = G.Scalar(Param::ParallaxSteps, 16.f, GroupUV, 1.f, 64.f);
+		auto March = [&](FName Map, int32 SortPriority) -> FPin
+		{
+			auto* Tex = G.New<UMaterialExpressionTextureObjectParameter>();
+			Tex->ParameterName = Map;
+			Tex->Texture = DefaultLinearTexture(TEXT("T_Glaze_DefaultMask"), TC_Masks);
+			Tex->SamplerType = SAMPLERTYPE_Masks;
+			Tex->Group = TEXT("01 Textures");
+			Tex->SortPriority = SortPriority;
+			auto* C = G.New<UMaterialExpressionCustom>();
+			C->Description = TEXT("Glaze Parallax");
+			// Shared wrap sampler: the ray march repeats like the main maps, whatever the texture's address mode.
+			C->OutputType = CMOT_Float2;
+			C->Code = TEXT(R"(float N = clamp(round(Steps), 1, 64);
+float2 Shift = Ray / max(RayZ, 0.15) * Depth;
+float2 DX = ddx(UV), DY = ddy(UV);
+float Layer = 1.0 / N;
+float Cur = 0, H = 1 - dot(Tex.SampleGrad(View.MaterialTextureBilinearWrapedSampler, UV, DX, DY), Channel);
+float PrevCur = 0, PrevH = H;
+[loop] for (int I = 0; I < 64 && Cur < H; I++)
+{
+	PrevCur = Cur; PrevH = H;
+	Cur += Layer;
+	H = 1 - dot(Tex.SampleGrad(View.MaterialTextureBilinearWrapedSampler, UV - Shift * Cur, DX, DY), Channel);
+}
+float A = H - Cur, B = PrevH - PrevCur;
+float T = A / min(A - B, -1e-5);
+return UV - Shift * clamp(lerp(Cur, PrevCur, T), 0, 1);)");
+			C->Inputs.Reset();
+			for (const TCHAR* Name : { TEXT("Tex"), TEXT("UV"), TEXT("Ray"), TEXT("RayZ"), TEXT("Channel"), TEXT("Depth"), TEXT("Steps") })
+			{
+				FCustomInput& In = C->Inputs.AddDefaulted_GetRef();
+				In.InputName = Name;
+			}
+			Link(C->Inputs[0].Input, { Tex });
+			Link(C->Inputs[1].Input, UV0);
+			Link(C->Inputs[2].Input, Ray);
+			Link(C->Inputs[3].Input, RayZ);
+			Link(C->Inputs[4].Input, Channel);
+			Link(C->Inputs[5].Input, Depth);
+			Link(C->Inputs[6].Input, Steps);
+			return { C };
+		};
+		const FPin Marched = G.Switch(Param::FromPacked(EGlazeSlot::Height), March(Param::PackedMap, PackedAtUV0->SortPriority),
+			March(Param::Map(EGlazeSlot::Height), G.Sort++), GroupUV);
+		UV = G.Switch(Param::UseMap(EGlazeSlot::Height), Marched, UV0, GroupUV);
+	}
+
+	// ---- Triplanar projection of the main textures: three planar samples blended by the normal ----
+	const FPin TriP = G.Div(G.Switch(Param::TriplanarLocal, { LocalPos }, { WorldPos }, GroupUV), G.Scalar(Param::TriplanarSize, 100.f, GroupUV, 10.f, 1000.f));
+	const FPin TriN = G.Switch(Param::TriplanarLocal, { NormalLocal }, { NormalWS }, GroupUV);
+	FPin TriW = G.Abs(TriN);
+	TriW = G.Mul(TriW, TriW);
+	TriW = G.Mul(TriW, TriW); // sharper blend between the projections
+	TriW = G.Div(TriW, G.Dot(TriW, G.Const3(FLinearColor(1, 1, 1))));
+	const FPin WX = G.Mask(TriW, true, false), WY = G.Mask(TriW, false, true), WZ = G.Mask(TriW, false, false, true);
+	// Vertical planes run V down the world Z axis, so images stand upright.
+	const FPin MinusZ = G.Mul(G.Mask(TriP, false, false, true), G.Const(-1.f));
+	const FPin UVX = G.Append(G.Mask(TriP, false, true), MinusZ);
+	const FPin UVY = G.Append(G.Mask(TriP, true, false), MinusZ);
+	const FPin UVZ = G.Mask(TriP, true, true);
+
+	/** A main texture by UV or triplanar (Triplanar switch); RGBA. All samples of one parameter share their metadata. */
+	auto Sample = [&](FName Name, const TCHAR* DefaultPath, EMaterialSamplerType Type, UMaterialExpressionTextureSampleParameter2D* SameAs = nullptr) -> FPin
+	{
+		UMaterialExpressionTextureSampleParameter2D* E = G.Texture(Name, DefaultPath, Type, UV);
+		if (SameAs)
+		{
+			E->SortPriority = SameAs->SortPriority;
+		}
+		auto Projected = [&](const FPin& Coords) -> FPin
+		{
+			UMaterialExpressionTextureSampleParameter2D* P = G.Texture(Name, DefaultPath, Type, Coords);
+			P->SortPriority = E->SortPriority;
+			return { P, OutRGBA };
+		};
+		const FPin Tri = G.Add(G.Add(G.Mul(Projected(UVX), WX), G.Mul(Projected(UVY), WY)), G.Mul(Projected(UVZ), WZ));
+		return G.Switch(Param::Triplanar, Tri, { E, OutRGBA }, GroupUV);
+	};
+	auto RGB = [&](const FPin& RGBA) { return G.Mask(RGBA, true, true, true); };
+
+	// ---- Noise: detail mask and macro patches in UV / world / object / bind-pose space; applied to color, roughness, normal below ----
+	const TCHAR* GroupNoise = TEXT("12 Noise");
+	FPin Position, NoiseNormal;
+	{
+		// Pre-skinned data exists only in the vertex shader.
+		const FPin PreSkinnedPos = G.Interpolate({ G.New<UMaterialExpressionPreSkinnedPosition>() });
+		const FPin PreSkinnedNormal = G.Interpolate({ G.New<UMaterialExpressionPreSkinnedNormal>() });
+		Position = G.Switch(Param::DetailPreSkinned, PreSkinnedPos, G.Switch(Param::DetailLocal, { LocalPos }, { WorldPos }, GroupNoise), GroupNoise);
+		NoiseNormal = G.Switch(Param::DetailPreSkinned, PreSkinnedNormal, G.Switch(Param::DetailLocal, { NormalLocal }, { NormalWS }, GroupNoise), GroupNoise);
+	}
+
+	FPin Detail;
+	{
+		const FPin P = G.Div(Position, G.Scalar(Param::DetailSize, 200.f, GroupNoise, 1.f, 1000.f));
+		const FPin DetailUV = G.Mul({ TexCoord }, G.Scalar(Param::DetailTiling, 2.f, GroupNoise, 0.1f, 16.f));
+
+		// Texture: one sample in UV space, or triplanar (three samples blended by the normal) in 3D spaces.
+		TArray<UMaterialExpressionTextureSampleParameter2D*> Samples;
+		auto DetailSample = [&](const FPin& Coords) -> FPin
+		{
+			UMaterialExpressionTextureSampleParameter2D* E = G.Texture(Param::DetailMap, nullptr, SAMPLERTYPE_LinearGrayscale, Coords);
+			if (Samples.Num() > 0)
+			{
+				E->SortPriority = Samples[0]->SortPriority; // one parameter, four expressions: keep their metadata identical
+			}
+			Samples.Add(E);
+			return { E, 1 }; // R
+		};
+		const FPin UVSample = DetailSample(DetailUV);
+		FPin W = G.Abs(NoiseNormal);
+		W = G.Mul(W, W);
+		W = G.Mul(W, W); // sharper blend between the projections
+		W = G.Div(W, G.Dot(W, G.Const3(FLinearColor(1, 1, 1))));
+		const FPin X = DetailSample(G.Mask(P, false, true, true));
+		const FPin Y = DetailSample(G.Mask(P, true, false, true));
+		const FPin Z = DetailSample(G.Mask(P, true, true));
+		const FPin Triplanar = G.Dot(G.Append(G.Append(X, Y), Z), W);
+		const FPin FromTexture = G.Switch(Param::DetailUV, UVSample, Triplanar, GroupNoise);
+
+		// Procedural: no texture, works the same in every space.
+		const FPin Procedural = G.Noise(G.Switch(Param::DetailUV, G.Append(DetailUV, G.Const(0.f)), P, GroupNoise), 4);
+
+		Detail = G.Switch(Param::DetailFromTexture, FromTexture, Procedural, GroupNoise);
+		const FPin Half = G.Const(0.5f);
+		Detail = G.Saturate(G.Add(G.Add(G.Mul(G.Sub(Detail, Half), G.Scalar(Param::DetailContrast, 1.f, GroupNoise, 0.f, 8.f)), Half),
+			G.Scalar(Param::DetailBias, 0.f, GroupNoise, -1.f, 1.f)));
+	}
+
+	// Macro: large soft patches in [-1, 1], always procedural.
+	FPin Macro;
+	{
+		const FPin MacroUV = G.Append(G.Mul({ TexCoord }, G.Scalar(Param::MacroTiling, 0.25f, GroupNoise, 0.01f, 4.f)), G.Const(0.f));
+		const FPin MacroP = G.Div(Position, G.Scalar(Param::MacroSize, 1000.f, GroupNoise, 50.f, 5000.f));
+		const FPin M = G.Noise(G.Switch(Param::DetailUV, MacroUV, MacroP, GroupNoise), 3);
+		Macro = G.Sub(G.Mul(G.Saturate(M), G.Const(2.f)), G.Const(1.f));
+	}
+
+	// ---- Base color ----
+	const TCHAR* GroupColor = TEXT("03 Base Color");
+	const TCHAR* GroupCC = TEXT("04 Color Correction");
+	const FPin BaseRGBA = Sample(Param::Map(EGlazeSlot::BaseColor), DefaultColorTexture, SAMPLERTYPE_Color);
+	FPin Color = G.Switch(Param::UseMap(EGlazeSlot::BaseColor), RGB(BaseRGBA), G.Const3(FLinearColor::White), GroupColor);
+	{
+		const FPin Desat = G.Desaturate(Color, G.Scalar(Param::Desaturation, 0.f, GroupCC, 0.f, 1.f));
+		// Contrast around linear mid grey (0.18 = sRGB 0.5), so a contrast change keeps mid tones in place.
+		const FPin Pivot = G.Const(0.18f);
+		const FPin Contrasted = G.Max(G.Add(G.Mul(G.Sub(Desat, Pivot), G.Scalar(Param::ColorContrast, 1.f, GroupCC, 0.f, 3.f)), Pivot), G.Const(0.f));
+		const FPin Bright = G.Mul(Contrasted, G.Scalar(Param::Brightness, 1.f, GroupCC, 0.f, 3.f));
+		const FPin Hue = G.Call(TEXT("/Engine/Functions/Engine_MaterialFunctions02/HueShift.HueShift"),
+			{ { TEXT("Hue Shift Percentage"), G.Scalar(Param::HueShift, 0.f, GroupCC, 0.f, 1.f) }, { TEXT("Texture"), Bright } });
+		const FPin Overlay = G.Call(TEXT("/Engine/Functions/Engine_MaterialFunctions03/Blends/Blend_Overlay.Blend_Overlay"),
+			{ { TEXT("Base"), Hue }, { TEXT("Blend"), G.Vector(Param::OverlayColor, FLinearColor(0.5f, 0.5f, 0.5f), GroupCC) } });
+		const FPin Overlaid = G.Lerp(Hue, Overlay, G.Scalar(Param::OverlayAmount, 0.f, GroupCC, 0.f, 1.f));
+		const FPin Lerped = G.Lerp(Overlaid, G.Vector(Param::LerpColor, FLinearColor::White, GroupCC), G.Scalar(Param::LerpAmount, 0.f, GroupCC, 0.f, 1.f));
+		Color = G.Switch(Param::ColorCorrection, Lerped, Color, GroupCC);
+	}
+	{
+		const FPin Dirty = G.Lerp(Color, G.Vector(Param::DetailColor, FLinearColor(0.05f, 0.04f, 0.03f), GroupNoise),
+			G.Mul(Detail, G.Scalar(Param::DetailColorAmount, 0.3f, GroupNoise, 0.f, 1.f)));
+		Color = G.Switch(Param::UseDetail, Dirty, Color, GroupNoise);
+		const FPin Patches = G.Mul(Color, G.Add(G.Const(1.f), G.Mul(Macro, G.Scalar(Param::MacroAmount, 0.3f, GroupNoise, 0.f, 1.f))));
+		Color = G.Switch(Param::UseMacro, Patches, Color, GroupNoise);
+	}
+	Link(Out->BaseColor, G.Mul(Color, G.Vector(Param::Tint, FLinearColor::White, GroupColor)));
+
+	// ---- Normal: strength, green flip, rotation compensation (vectors rotate with the UVs) ----
+	{
+		const TCHAR* GroupNormal = TEXT("10 Normal");
+		const FPin FlipY = G.Sub(G.Const(1.f), G.Mul(G.Scalar(Param::FlipGreen, 0.f, GroupNormal, 0.f, 1.f), G.Const(2.f)));
+		const FPin Strength = G.Scalar(Param::NormalStrength, 1.f, GroupNormal, 0.f, 3.f);
+		const FName NormalMap = Param::Map(EGlazeSlot::Normal);
+		/** Tangent-space normal of one sample with strength and green flip. */
+		auto Unpack = [&](const FPin& N) -> FPin
+		{
+			const FPin XY = G.Mul(G.Append(G.Mask(N, true, false), G.Mul(G.Mask(N, false, true), FlipY)), Strength);
+			return G.Append(XY, G.Mask(N, false, false, true));
+		};
+		UMaterialExpressionTextureSampleParameter2D* NormalTex = G.Texture(NormalMap, DefaultNormalTexture, SAMPLERTYPE_Normal, UV);
+		const FPin N = Unpack({ NormalTex, OutRGB });
+		// Inverse rotation of the UV rotation above.
+		const FPin NX = G.Mask(N, true, false);
+		const FPin NY = G.Mask(N, false, true);
+		const FPin ByUV = G.Append(G.Append(G.Add(G.Mul(NX, Cos), G.Mul(NY, Sin)), G.Sub(G.Mul(NY, Cos), G.Mul(NX, Sin))), G.Mask(N, false, false, true));
+
+		// Triplanar: whiteout blend of each plane's normal with the surface normal, in the projection space
+		// (plane U/V axes: X plane +Y/-Z, Y plane +X/-Z, Z plane +X/+Y), then into tangent space.
+		auto Projected = [&](const FPin& Coords) -> FPin
+		{
+			UMaterialExpressionTextureSampleParameter2D* E = G.Texture(NormalMap, DefaultNormalTexture, SAMPLERTYPE_Normal, Coords);
+			E->SortPriority = NormalTex->SortPriority;
+			// Normalized per plane: zero strength leaves exactly the surface normal after the whiteout blend.
+			return G.Normalize(Unpack({ E, OutRGB }));
+		};
+		const FPin TX = Projected(UVX), TY = Projected(UVY), TZ = Projected(UVZ);
+		auto C = [&](const FPin& V, int32 I) { return G.Mask(V, I == 0, I == 1, I == 2); };
+		const FPin SX = C(TriN, 0), SY = C(TriN, 1), SZ = C(TriN, 2);
+		const FPin PX = G.Append(G.Append(G.Mul(G.Abs(C(TX, 2)), SX), G.Add(C(TX, 0), SY)), G.Sub(SZ, C(TX, 1)));
+		const FPin PY = G.Append(G.Append(G.Add(C(TY, 0), SX), G.Mul(G.Abs(C(TY, 2)), SY)), G.Sub(SZ, C(TY, 1)));
+		const FPin PZ = G.Append(G.Append(G.Add(C(TZ, 0), SX), G.Add(C(TZ, 1), SY)), G.Mul(G.Abs(C(TZ, 2)), SZ));
+		const FPin Blended = G.Normalize(G.Add(G.Add(G.Mul(PX, WX), G.Mul(PY, WY)), G.Mul(PZ, WZ)));
+		auto ToTangent = [&](EMaterialVectorCoordTransformSource From) -> FPin
+		{
+			auto* E = G.New<UMaterialExpressionTransform>();
+			E->TransformSourceType = From;
+			E->TransformType = TRANSFORM_Tangent;
+			Link(E->Input, Blended);
+			return { E };
+		};
+		const FPin ByTriplanar = G.Switch(Param::TriplanarLocal, ToTangent(TRANSFORMSOURCE_Local), ToTangent(TRANSFORMSOURCE_World), GroupUV);
+		const FPin Normal = G.Switch(Param::Triplanar, ByTriplanar, ByUV, GroupUV);
+		// Normalized: strength scales only XY, and the whiteout blend below multiplies the Z of both normals.
+		const FPin Base = G.Switch(Param::UseMap(EGlazeSlot::Normal), G.Normalize(Normal), G.Const3(FLinearColor(0, 0, 1)), GroupNormal);
+
+		// Detail bump from screen-space derivatives of the detail height (works in every noise space, no extra samples).
+		auto* CameraPos = G.New<UMaterialExpressionWorldPosition>();
+		CameraPos->WorldPositionShaderOffset = WPT_CameraRelativeNoOffsets;
+		const FPin Height = G.Mul(Detail, G.Scalar(Param::DetailBump, 0.f, GroupNoise, -5.f, 5.f));
+		const FPin DPdx = G.DDX({ CameraPos });
+		const FPin DPdy = G.DDY({ CameraPos });
+		const FPin R1 = G.Cross(DPdy, { NormalWS });
+		const FPin R2 = G.Cross({ NormalWS }, DPdx);
+		const FPin Det = G.Dot(DPdx, R1);
+		const FPin Grad = G.Mul(G.Sign(Det), G.Add(G.Mul(G.DDX(Height), R1), G.Mul(G.DDY(Height), R2)));
+		auto* BumpTS = G.New<UMaterialExpressionTransform>();
+		BumpTS->TransformSourceType = TRANSFORMSOURCE_World;
+		BumpTS->TransformType = TRANSFORM_Tangent;
+		Link(BumpTS->Input, G.Normalize(G.Sub(G.Mul(G.Abs(Det), { NormalWS }), Grad)));
+		// Whiteout blend with the map normal.
+		const FPin Bumped = G.Normalize(G.Append(G.Add(G.Mask(Base, true, true), G.Mask({ BumpTS }, true, true)),
+			G.Mul(G.Mask(Base, false, false, true), G.Mask({ BumpTS }, false, false, true))));
+		Link(Out->Normal, G.Switch(Param::UseDetailBump, Bumped, Base, GroupNoise));
+	}
+
+	// ---- Grayscale channels: own map or a channel of the shared packed map, remapped; or a constant ----
+	const FPin PackedRGBA = Sample(Param::PackedMap, DefaultMasksTexture, SAMPLERTYPE_Masks, PackedAtUV0);
+	auto Grayscale = [&](EGlazeSlot Slot, const FPin& NoMap) -> FPin
+	{
+		const TCHAR* Group = GroupOf(Slot);
+		const FPin Channel = G.Vector(Param::Channel(Slot), FLinearColor(1, 0, 0, 0), Group, OutRGBA);
+		const FPin Own = G.Dot(Sample(Param::Map(Slot), DefaultMasksTexture, SAMPLERTYPE_Masks), Channel);
+		const FPin Packed = G.Dot(PackedRGBA, Channel);
+		FPin V = G.Switch(Param::FromPacked(Slot), Packed, Own, Group);
+		V = G.Lerp(V, G.OneMinus(V), G.Scalar(Param::Invert(Slot), 0.f, Group, 0.f, 1.f));
+		const FPin Half = G.Const(0.5f);
+		V = G.Saturate(G.Add(G.Add(G.Mul(G.Sub(V, Half), G.Scalar(Param::Contrast(Slot), 1.f, Group, 0.f, 4.f)), Half),
+			G.Scalar(Param::Bias(Slot), 0.f, Group, -1.f, 1.f)));
+		V = G.Lerp(G.Scalar(Param::Min(Slot), 0.f, Group, 0.f, 1.f), G.Scalar(Param::Max(Slot), 1.f, Group, 0.f, 1.f), V);
+		return G.Switch(Param::UseMap(Slot), V, NoMap, Group);
+	};
+	{
+		FPin Roughness = Grayscale(EGlazeSlot::Roughness, G.Scalar(Param::Value(EGlazeSlot::Roughness), 0.5f, GroupOf(EGlazeSlot::Roughness), 0.f, 1.f));
+		const FPin WithDetail = G.Saturate(G.Add(Roughness, G.Mul(Detail, G.Scalar(Param::DetailRoughness, 0.15f, GroupNoise, -1.f, 1.f))));
+		Roughness = G.Switch(Param::UseDetail, WithDetail, Roughness, GroupNoise);
+		const FPin WithMacro = G.Saturate(G.Add(Roughness, G.Mul(Macro, G.Scalar(Param::MacroRoughness, 0.1f, GroupNoise, 0.f, 1.f))));
+		Link(Out->Roughness, G.Switch(Param::UseMacro, WithMacro, Roughness, GroupNoise));
+	}
+	Link(Out->Metallic, Grayscale(EGlazeSlot::Metallic, G.Scalar(Param::Value(EGlazeSlot::Metallic), 0.f, GroupOf(EGlazeSlot::Metallic), 0.f, 1.f)));
+	Link(Out->Specular, Grayscale(EGlazeSlot::Specular, G.Scalar(Param::Value(EGlazeSlot::Specular), 0.5f, GroupOf(EGlazeSlot::Specular), 0.f, 1.f)));
+	Link(Out->AmbientOcclusion, Grayscale(EGlazeSlot::AmbientOcclusion,
+		G.Scalar(Param::Value(EGlazeSlot::AmbientOcclusion), 1.f, GroupOf(EGlazeSlot::AmbientOcclusion), 0.f, 1.f)));
+
+	// ---- Opacity (used when the instance overrides Blend Mode to Masked) ----
+	{
+		const TCHAR* Group = GroupOf(EGlazeSlot::Opacity);
+		FPin Opacity = Grayscale(EGlazeSlot::Opacity, G.Mask(BaseRGBA, false, false, false, true));
+		Opacity = G.Mul(Opacity, G.Scalar(Param::OpacityAmount, 1.f, Group, 0.f, 1.f));
+		const FPin Dithered = G.Call(TEXT("/Engine/Functions/Engine_MaterialFunctions02/Utility/DitherTemporalAA.DitherTemporalAA"),
+			{ { TEXT("Alpha Threshold"), Opacity } });
+		Opacity = G.Switch(Param::Dithered, Dithered, Opacity, Group);
+		Link(Out->OpacityMask, G.Switch(Param::UseOpacity, Opacity, G.Const(1.f), Group));
+	}
+
+	// ---- Emissive ----
+	{
+		const TCHAR* Group = TEXT("11 Emissive");
+		const FPin EmissiveRGB = RGB(Sample(Param::Map(EGlazeSlot::Emissive), DefaultColorTexture, SAMPLERTYPE_Color));
+		FPin Map = G.Switch(Param::UseMap(EGlazeSlot::Emissive), EmissiveRGB, G.Const3(FLinearColor::White), Group);
+		Map = G.Switch(Param::EmissiveFromBaseColor, RGB(BaseRGBA), Map, Group);
+		const FPin Emissive = G.Mul(G.Mul(Map, G.Vector(Param::EmissiveColor, FLinearColor::White, Group)),
+			G.Scalar(Param::EmissiveIntensity, 1.f, Group, 0.f, 50.f));
+		Link(Out->EmissiveColor, G.Switch(Param::UseEmissive, Emissive, G.Const3(FLinearColor::Black), Group));
+	}
+
+	// ---- Wind: vertices sway along the wind direction in gusts travelling with it ----
+	{
+		const TCHAR* Group = TEXT("13 Wind");
+		const FPin Yaw = G.Scalar(Param::WindDirection, 0.f, Group, -180.f, 180.f);
+		const FPin Dir = G.Append(G.Append(G.CosDeg(Yaw), G.SinDeg(Yaw)), G.Const(0.f));
+		// Phase in gusts: position along the wind minus time. Position is divided first to keep large worlds precise.
+		const FPin Along = G.Dot(G.Div({ WorldPos }, G.Scalar(Param::WindGustSize, 800.f, Group, 50.f, 5000.f)), Dir);
+		const FPin Phase = G.Sub(Along, G.Mul({ G.New<UMaterialExpressionTime>() }, G.Scalar(Param::WindSpeed, 0.5f, Group, 0.f, 4.f)));
+		const FPin Wave = G.Add(G.Mul(G.Sin(Phase, 1.f), G.Const(0.6f)), G.Mul(G.Sin(G.Add(G.Mul(Phase, G.Const(2.3f)), G.Const(0.37f)), 1.f), G.Const(0.4f)));
+		const FPin Push = G.Add(G.Mul(Wave, G.Const(0.5f)), G.Const(0.5f)); // mostly with the wind, a little back
+		// Height above the pivot in world centimeters: a mesh scaled up sways by its real height.
+		// The pivot is the local origin (Object Position is the bounds center); per instance on ISMs.
+		auto* Pivot = G.New<UMaterialExpressionTransformPosition>();
+		Pivot->TransformSourceType = TRANSFORMPOSSOURCE_Local;
+		Pivot->TransformType = TRANSFORMPOSSOURCE_World;
+		Link(Pivot->Input, G.Const3(FLinearColor::Black));
+		const FPin Above = G.Sub(G.Mask({ WorldPos }, false, false, true), G.Mask({ Pivot }, false, false, true));
+		FPin ByHeight = G.Saturate(G.Div(Above, G.Scalar(Param::WindHeight, 200.f, Group, 10.f, 2000.f)));
+		ByHeight = G.Mul(ByHeight, ByHeight); // stiff near the base
+		const FPin Weight = G.Switch(Param::WindByVertexColor, { G.New<UMaterialExpressionVertexColor>(), 1 },
+			G.Switch(Param::WindByHeight, ByHeight, G.Const(1.f), Group), Group);
+		const FPin Offset = G.Mul(Dir, G.Mul(G.Mul(Push, Weight), G.Scalar(Param::WindStrength, 5.f, Group, 0.f, 50.f)));
+		Link(Out->WorldPositionOffset, G.Switch(Param::UseWind, Offset, G.Const3(FLinearColor::Black), Group));
+	}
+
+	UMaterialEditingLibrary::LayoutMaterialExpressions(Material);
+	// Parameter queries read the cached data; PostEditChange would refresh it too, but callers (tests) may skip that.
+	Material->UpdateCachedExpressionData();
+}
+
+bool IsGlazeMaster(const UObject* Material)
+{
+	return Material && Material->GetPathName() == MasterObjectPath;
+}
+
+TArray<UPackage*> DirtyMasterPackages()
+{
+	TArray<UPackage*> Packages;
+	for (const TCHAR* Name : { MasterPackagePath, TEXT("/Game/Glaze/T_Glaze_DefaultMask"), TEXT("/Game/Glaze/T_Glaze_DefaultGray") })
+	{
+		UPackage* Package = FindPackage(nullptr, Name);
+		if (Package && Package->IsDirty())
+		{
+			Packages.Add(Package);
+		}
+	}
+	return Packages;
+}
+
+void SetMasterUsages(UMaterial* Material)
+{
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+	for (EMaterialUsage Usage : { MATUSAGE_SkeletalMesh, MATUSAGE_InstancedStaticMeshes, MATUSAGE_SplineMesh, MATUSAGE_GeometryCache, MATUSAGE_NiagaraMeshParticles })
+	{
+		Material->SetUsageByFlag(Usage, true);
+	}
+#else
+	// SetUsageByFlag is private before UE 5.8.
+	Material->bUsedWithSkeletalMesh = true;
+	Material->bUsedWithInstancedStaticMeshes = true;
+	Material->bUsedWithSplineMeshes = true;
+	Material->bUsedWithGeometryCache = true;
+	Material->bUsedWithNiagaraMeshParticles = true;
+#endif
+}
+
+UMaterial* EnsureMaster(bool bSave, FString* OutError)
+{
+	auto Fail = [OutError](const FString& Error) -> UMaterial*
+	{
+		UE_LOG(LogGlazeMaster, Error, TEXT("%s"), *Error);
+		if (OutError)
+		{
+			*OutError = Error;
+		}
+		return nullptr;
+	};
+	UMaterial* Material = LoadObject<UMaterial>(nullptr, MasterObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Material)
+	{
+		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+		UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+		Material = Cast<UMaterial>(AssetTools.CreateAsset(TEXT("M_Glaze"), FPackageName::GetLongPackagePath(MasterPackagePath),
+			UMaterial::StaticClass(), Factory));
+		if (!Material)
+		{
+			return Fail(FString::Printf(TEXT("Could not create %s"), MasterPackagePath));
+		}
+	}
+
+	UPackage* Package = Material->GetPackage();
+	FMetaData& Meta = Package->GetMetaData();
+	const int32 Version = FCString::Atoi(*Meta.GetValue(Material, MetaVersionKey));
+	if (Version >= MasterVersion)
+	{
+		if (Version > MasterVersion)
+		{
+			UE_LOG(LogGlazeMaster, Warning, TEXT("%s is version %d, newer than this plugin (%d); using it as is"),
+				MasterPackagePath, Version, MasterVersion);
+		}
+		return Material;
+	}
+
+	UE_LOG(LogGlazeMaster, Display, TEXT("Building %s (version %d -> %d)"), MasterPackagePath, Version, MasterVersion);
+	// An open Material Editor works on its own copy and would write the old graph back on Apply. It asks to save
+	// unapplied changes, and Cancel keeps it open: then the update waits for the next try.
+	if (GEditor)
+	{
+		UAssetEditorSubsystem* Editors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+		Editors->CloseAllEditorsForAsset(Material);
+		if (Editors->FindEditorsForAsset(Material).Num() > 0)
+		{
+			return Fail(FString::Printf(TEXT("%s needs an update by Glaze: close its Material Editor and try again."), MasterPackagePath));
+		}
+	}
+	CreatedDefaultPackages.Reset();
+	Material->PreEditChange(nullptr);
+	Material->BlendMode = BLEND_Opaque;
+	SetMasterUsages(Material);
+	BuildMasterGraph(Material);
+	Meta.SetValue(Material, MetaVersionKey, *LexToString(MasterVersion));
+	// PostEditChange + update of the loaded child instances (their static permutations) + open editors.
+	UMaterialEditingLibrary::RecompileMaterial(Material);
+
+	if (bSave)
+	{
+		TArray<UPackage*> Packages = CreatedDefaultPackages;
+		Packages.Add(Package);
+		if (!UEditorLoadingAndSavingUtils::SavePackages(Packages, /*bOnlyDirty*/ false))
+		{
+			// Still usable now; every instance write retries the save (DirtyMasterPackages).
+			UE_LOG(LogGlazeMaster, Error, TEXT("Could not save %s"), MasterPackagePath);
+		}
+	}
+	CreatedDefaultPackages.Reset();
+	return Material;
+}
+}
