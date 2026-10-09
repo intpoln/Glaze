@@ -8,7 +8,7 @@
 	"CreatedBy": "intpoln",
 	"CreatedByURL": "https://github.com/intpoln",
 	"DocsURL": "https://github.com/intpoln/Glaze#readme",
-	"FabURL": "",
+	"FabURL": "com.epicgames.launcher://ue/Fab/product/754988a2-ceff-495d-b973-fbc3f1402220",
 	"SupportURL": "https://github.com/intpoln/Glaze/issues",
 	"CanContainContent": true,
 	"IsBetaVersion": false,
