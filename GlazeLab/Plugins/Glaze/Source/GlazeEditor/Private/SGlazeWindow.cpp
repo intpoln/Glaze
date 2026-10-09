@@ -12,6 +12,7 @@
 #include "GlazeMaster.h"
 #include "GlazeMatcher.h"
 #include "GlazeRecipe.h"
+#include "GlazeUndoKeys.h"
 #include "IDetailsView.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Materials/Material.h"
@@ -445,6 +446,8 @@ void SGlazeWindow::OpenForInstance(UMaterialInstanceConstant* Instance)
 	W->Recipe->Folder.Path = FPackageName::GetLongPackagePath(Instance->GetPackage()->GetName());
 	W->Recipe->OnChanged.AddSP(W, &SGlazeWindow::OnRecipeChanged);
 	W->Details->SetObject(W->Recipe.Get());
+	// Like opening textures: the first preview already samples fixed maps (undone on Cancel).
+	W->FixTextures();
 	W->CapturePreviewTargets();
 	W->RefreshPreview();
 	W->RefreshInfo();
@@ -956,6 +959,10 @@ FReply SGlazeWindow::OnKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEv
 	if (KeyEvent.GetKey() == EKeys::Escape)
 	{
 		return OnCancel();
+	}
+	if (Glaze::HandleUndoKeys(KeyEvent))
+	{
+		return FReply::Handled();
 	}
 	return SCompoundWidget::OnKeyDown(Geometry, KeyEvent);
 }

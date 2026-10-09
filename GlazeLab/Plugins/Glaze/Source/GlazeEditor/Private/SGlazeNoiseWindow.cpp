@@ -8,6 +8,7 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "GlazeNoise.h"
 #include "GlazePack.h"
+#include "GlazeUndoKeys.h"
 #include "IDetailsView.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Misc/PackageName.h"
@@ -69,7 +70,8 @@ namespace
 
 void SGlazeNoiseWindow::Construct(const FArguments& InArgs)
 {
-	Settings.Reset(NewObject<UGlazeNoiseSettings>(GetTransientPackage()));
+	// Transactional: Ctrl+Z in the Details panel undoes the adjustments.
+	Settings.Reset(NewObject<UGlazeNoiseSettings>(GetTransientPackage(), NAME_None, RF_Transactional));
 	Settings->OnChanged.AddSP(this, &SGlazeNoiseWindow::OnSettingsChanged);
 
 	FPropertyEditorModule& PropertyEditor = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -324,6 +326,10 @@ void SGlazeNoiseWindow::OnSettingsChanged(const FPropertyChangedEvent& Event)
 	{
 		bNameEdited = true;
 	}
+	if (!Event.Property && Details) // undo / redo
+	{
+		Details->ForceRefresh();
+	}
 	UpdatePreview();
 }
 
@@ -368,6 +374,11 @@ void SGlazeNoiseWindow::UpdatePreview()
 		return;
 	}
 	// Same texture, new pixels: no new resource on every step of a slider drag.
+	// No render resource (-nullrhi): the update would be dropped together with its buffer.
+	if (!PreviewTexture->GetResource())
+	{
+		return;
+	}
 	uint8* Data = static_cast<uint8*>(FMemory::Malloc(BGRA.Num()));
 	FMemory::Memcpy(Data, BGRA.GetData(), BGRA.Num());
 	FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(0, 0, 0, 0, SourceSize, SourceSize);
@@ -386,6 +397,16 @@ FReply SGlazeNoiseWindow::OnCreate()
 		return FReply::Handled();
 	}
 	const int32 TargetSize = Settings->Size();
+	// Only the project's Content: a texture inside the plugin or the engine would not travel with the project.
+	FString Folder = Settings->Folder.Path;
+	Folder.RemoveFromEnd(TEXT("/"));
+	const FString Name = FPaths::MakeValidFileName(Settings->AssetName.TrimStartAndEnd(), TEXT('_'));
+	if (Name.IsEmpty() || (Folder != TEXT("/Game") && !Folder.StartsWith(TEXT("/Game/")))
+		|| !FPackageName::IsValidLongPackageName(Folder / Name))
+	{
+		NotifyNoise(LOCTEXT("BadName", "Pick a name and a folder under /Game."), false);
+		return FReply::Handled();
+	}
 	TArray<uint8> Pixels;
 	int32 Size = 0;
 	if (!Glaze::Noise::LoadGray(Glaze::Noise::PackFile(Items[Selected]->Name, TargetSize), TargetSize, Pixels, Size))
@@ -399,14 +420,6 @@ FReply SGlazeNoiseWindow::OnCreate()
 		V = Lut[V];
 	}
 
-	FString Folder = Settings->Folder.Path;
-	Folder.RemoveFromEnd(TEXT("/"));
-	const FString Name = FPaths::MakeValidFileName(Settings->AssetName.TrimStartAndEnd(), TEXT('_'));
-	if (Name.IsEmpty() || !FPackageName::IsValidLongPackageName(Folder / Name))
-	{
-		NotifyNoise(LOCTEXT("BadName", "Pick a name and a folder under /Game."), false);
-		return FReply::Handled();
-	}
 	FString Path = Folder / Name;
 	if (!bNameEdited)
 	{
@@ -419,16 +432,11 @@ FReply SGlazeNoiseWindow::OnCreate()
 	UTexture2D* Texture = Glaze::Noise::CreateTextureAsset(Pixels, Size, Path, Error, Settings->bSRGB);
 	if (!Texture || !Error.IsEmpty())
 	{
+		// Not created or not saved: the window and its settings stay, the script gets an empty path.
 		NotifyNoise(FText::FromString(Error), false);
-		if (!Texture)
-		{
-			return FReply::Handled();
-		}
+		return FReply::Handled();
 	}
-	else
-	{
-		NotifyNoise(FText::Format(LOCTEXT("Created", "Created {0}"), FText::FromString(FPackageName::GetShortName(Path))), true);
-	}
+	NotifyNoise(FText::Format(LOCTEXT("Created", "Created {0}"), FText::FromString(FPackageName::GetShortName(Path))), true);
 	LastCreated = Texture->GetPathName();
 	if (GEditor)
 	{
@@ -463,6 +471,10 @@ FReply SGlazeNoiseWindow::OnKeyDown(const FGeometry& Geometry, const FKeyEvent& 
 	if (KeyEvent.GetKey() == EKeys::Escape)
 	{
 		Close();
+		return FReply::Handled();
+	}
+	if (Glaze::HandleUndoKeys(KeyEvent))
+	{
 		return FReply::Handled();
 	}
 	return SCompoundWidget::OnKeyDown(Geometry, KeyEvent);

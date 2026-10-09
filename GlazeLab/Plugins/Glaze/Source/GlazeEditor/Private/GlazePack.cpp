@@ -63,10 +63,17 @@ namespace
 	/** A copy of File resized to Size (under Saved/Glaze/Resized) for import; File itself when it is not larger. */
 	FString ResizedFile(const FString& File, int32 Size)
 	{
+		// The pack ships 1K and 2K files: only the smaller sizes need decoding.
 		FImage Image;
-		if (Size <= 0 || !FImageUtils::LoadImage(*File, Image) || Image.SizeX <= Size)
+		if (Size <= 0 || Size >= 1024 || !FImageUtils::LoadImage(*File, Image) || Image.SizeX <= Size)
 		{
 			return File;
+		}
+		// Normals, packed data and noises hold linear values: filter them as such (relabel, keep the bytes).
+		const FString Base = FPaths::GetBaseFilename(File);
+		if (Base.EndsWith(TEXT("_N")) || Base.EndsWith(TEXT("_ORM")) || Base.StartsWith(TEXT("T_Noise_")))
+		{
+			Image.GammaSpace = EGammaSpace::Linear;
 		}
 		FImage Resized;
 		Image.ResizeTo(Resized, Size, FMath::Max(1, Image.SizeY * Size / Image.SizeX), Image.Format, Image.GammaSpace);
@@ -101,11 +108,13 @@ namespace
 			Compression = TC_Grayscale;
 			bSRGB = false;
 		}
-		if (Texture->CompressionSettings != Compression || Texture->SRGB != bSRGB)
+		// Pack normals are DirectX: whatever the project's import pipeline flips must be undone.
+		if (Texture->CompressionSettings != Compression || Texture->SRGB != bSRGB || Texture->bFlipGreenChannel)
 		{
 			Texture->PreEditChange(nullptr);
 			Texture->CompressionSettings = Compression;
 			Texture->SRGB = bSRGB;
+			Texture->bFlipGreenChannel = false;
 			Texture->PostEditChange();
 			Texture->MarkPackageDirty();
 		}

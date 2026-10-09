@@ -73,6 +73,7 @@ public:
 	FOnChanged OnChanged;
 
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
+	virtual void PostEditUndo() override;
 };
 
 namespace Glaze::Noise

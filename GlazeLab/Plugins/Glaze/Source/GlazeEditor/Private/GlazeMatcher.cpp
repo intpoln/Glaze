@@ -162,11 +162,12 @@ FNameMatch MatchTextureName(const FString& AssetName)
 	}
 	if (!Rule)
 	{
-		// A lone exact channel name ("Normal", "Roughness"): the set has no name of its own. Short ones ("N", "R") stay ambiguous.
+		// A lone exact channel name ("Normal", "Roughness", "ORM", "AO"): the set has no name of its own.
+		// Single letters ("N", "R") stay ambiguous.
 		if (Tokens.Num() == 1)
 		{
 			const FSuffixRule* Exact = FindRule(Tokens[0]);
-			if (Exact && FString(Exact->Token).Len() >= 4)
+			if (Exact && FString(Exact->Token).Len() >= 2)
 			{
 				Result.Slots = Exact->Slots;
 				Result.Reason = TEXT("_") + Tokens[0];

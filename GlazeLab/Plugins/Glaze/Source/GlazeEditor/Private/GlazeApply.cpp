@@ -143,7 +143,7 @@ TArray<FTextureFix> PlanTextureFixes(const UGlazeRecipe& Recipe, TArray<FString>
 			continue;
 		}
 		const EUse Use = *Pair.Value.CreateConstIterator();
-		const bool bHDR = T->CompressionSettings == TC_HDR || T->CompressionSettings == TC_HDR_Compressed || T->CompressionSettings == TC_HDR_F32;
+		const bool bHDR = UE::TextureDefines::IsHDR(T->CompressionSettings);
 		if (Use == EUse::Color && bHDR)
 		{
 			// UE keeps HDR textures linear, and the master samples color as sRGB.

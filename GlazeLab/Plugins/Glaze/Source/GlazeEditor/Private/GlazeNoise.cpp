@@ -32,6 +32,13 @@ void UGlazeNoiseSettings::PostEditChangeProperty(FPropertyChangedEvent& Event)
 	OnChanged.Broadcast(Event);
 }
 
+void UGlazeNoiseSettings::PostEditUndo()
+{
+	Super::PostEditUndo();
+	FPropertyChangedEvent Event(nullptr);
+	OnChanged.Broadcast(Event);
+}
+
 namespace Glaze::Noise
 {
 TArray<uint8> BuildLut(const UGlazeNoiseSettings& S)
@@ -70,6 +77,8 @@ bool LoadGray(const FString& File, int32 Size, TArray<uint8>& OutPixels, int32& 
 	{
 		return false;
 	}
+	// The pack noises are linear masks: an 8-bit PNG is labelled sRGB on load, relabel it without touching the bytes.
+	Image.GammaSpace = EGammaSpace::Linear;
 	FImage Gray;
 	if (Size > 0 && Size != Image.SizeX)
 	{

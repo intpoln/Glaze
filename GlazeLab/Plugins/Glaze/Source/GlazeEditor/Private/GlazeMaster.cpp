@@ -27,7 +27,7 @@
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionLinearInterpolate.h"
 #include "Materials/MaterialExpressionLocalPosition.h"
-#include "Materials/MaterialExpressionObjectPositionWS.h"
+#include "Materials/MaterialExpressionTransformPosition.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionMax.h"
 #include "Materials/MaterialExpressionMultiply.h"
@@ -453,18 +453,19 @@ void BuildMasterGraph(UMaterial* Material)
 			Tex->SortPriority = SortPriority;
 			auto* C = G.New<UMaterialExpressionCustom>();
 			C->Description = TEXT("Glaze Parallax");
+			// Shared wrap sampler: the ray march repeats like the main maps, whatever the texture's address mode.
 			C->OutputType = CMOT_Float2;
 			C->Code = TEXT(R"(float N = clamp(round(Steps), 1, 64);
 float2 Shift = Ray / max(RayZ, 0.15) * Depth;
 float2 DX = ddx(UV), DY = ddy(UV);
 float Layer = 1.0 / N;
-float Cur = 0, H = 1 - dot(Tex.SampleGrad(TexSampler, UV, DX, DY), Channel);
+float Cur = 0, H = 1 - dot(Tex.SampleGrad(View.MaterialTextureBilinearWrapedSampler, UV, DX, DY), Channel);
 float PrevCur = 0, PrevH = H;
 [loop] for (int I = 0; I < 64 && Cur < H; I++)
 {
 	PrevCur = Cur; PrevH = H;
 	Cur += Layer;
-	H = 1 - dot(Tex.SampleGrad(TexSampler, UV - Shift * Cur, DX, DY), Channel);
+	H = 1 - dot(Tex.SampleGrad(View.MaterialTextureBilinearWrapedSampler, UV - Shift * Cur, DX, DY), Channel);
 }
 float A = H - Cur, B = PrevH - PrevCur;
 float T = A / min(A - B, -1e-5);
@@ -632,7 +633,8 @@ return UV - Shift * clamp(lerp(Cur, PrevCur, T), 0, 1);)");
 		{
 			UMaterialExpressionTextureSampleParameter2D* E = G.Texture(NormalMap, DefaultNormalTexture, SAMPLERTYPE_Normal, Coords);
 			E->SortPriority = NormalTex->SortPriority;
-			return Unpack({ E, OutRGB });
+			// Normalized per plane: zero strength leaves exactly the surface normal after the whiteout blend.
+			return G.Normalize(Unpack({ E, OutRGB }));
 		};
 		const FPin TX = Projected(UVX), TY = Projected(UVY), TZ = Projected(UVZ);
 		auto C = [&](const FPin& V, int32 I) { return G.Mask(V, I == 0, I == 1, I == 2); };
@@ -735,7 +737,12 @@ return UV - Shift * clamp(lerp(Cur, PrevCur, T), 0, 1);)");
 		const FPin Wave = G.Add(G.Mul(G.Sin(Phase, 1.f), G.Const(0.6f)), G.Mul(G.Sin(G.Add(G.Mul(Phase, G.Const(2.3f)), G.Const(0.37f)), 1.f), G.Const(0.4f)));
 		const FPin Push = G.Add(G.Mul(Wave, G.Const(0.5f)), G.Const(0.5f)); // mostly with the wind, a little back
 		// Height above the pivot in world centimeters: a mesh scaled up sways by its real height.
-		const FPin Above = G.Sub(G.Mask({ WorldPos }, false, false, true), G.Mask({ G.New<UMaterialExpressionObjectPositionWS>() }, false, false, true));
+		// The pivot is the local origin (Object Position is the bounds center); per instance on ISMs.
+		auto* Pivot = G.New<UMaterialExpressionTransformPosition>();
+		Pivot->TransformSourceType = TRANSFORMPOSSOURCE_Local;
+		Pivot->TransformType = TRANSFORMPOSSOURCE_World;
+		Link(Pivot->Input, G.Const3(FLinearColor::Black));
+		const FPin Above = G.Sub(G.Mask({ WorldPos }, false, false, true), G.Mask({ Pivot }, false, false, true));
 		FPin ByHeight = G.Saturate(G.Div(Above, G.Scalar(Param::WindHeight, 200.f, Group, 10.f, 2000.f)));
 		ByHeight = G.Mul(ByHeight, ByHeight); // stiff near the base
 		const FPin Weight = G.Switch(Param::WindByVertexColor, { G.New<UMaterialExpressionVertexColor>(), 1 },

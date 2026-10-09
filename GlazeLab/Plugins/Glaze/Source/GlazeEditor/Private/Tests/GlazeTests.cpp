@@ -618,6 +618,11 @@ bool FGlazeNoiseTest::RunTest(const FString&)
 	TestTrue(TEXT("gamma above 1 brightens"), Lut[64] > 100);
 
 	// Pack noise decoding: resized grayscale.
+	if (Pack::Noises().IsEmpty())
+	{
+		AddError(TEXT("The pack manifest lists no noises"));
+		return false;
+	}
 	TArray<uint8> Pixels;
 	int32 Size = 0;
 	TestTrue(TEXT("decode thumbnail"), Noise::LoadGray(Noise::PackFile(Pack::Noises()[0], 1024), 96, Pixels, Size));

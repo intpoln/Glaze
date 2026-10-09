@@ -16,7 +16,7 @@ mkdir -p "$DIR"
 rm -rf "$TMP"
 PLUGIN=$(cygpath -w "$ROOT/GlazeLab/Plugins/Glaze/Glaze.uplugin")
 PKG=$(cygpath -w "$TMP")
-case "$PLUGIN$PKG" in *"'"*) echo "paths with ' are not supported"; exit 2;; esac
+case "$PLUGIN$PKG" in *"'"*|*"&"*) echo "paths with ' or & are not supported"; exit 2;; esac
 # PowerShell passes each quoted argument intact (cmd //c with escaped quotes breaks under Git Bash).
 powershell.exe -NoProfile -Command "& '$UAT' BuildPlugin '-Plugin=$PLUGIN' '-Package=$PKG' -TargetPlatforms=Win64 -Rocket; exit \$LASTEXITCODE" > "$DIR/package_log.txt" 2>&1
 CODE=$?
