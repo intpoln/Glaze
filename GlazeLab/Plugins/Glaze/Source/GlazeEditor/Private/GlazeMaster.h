@@ -14,8 +14,14 @@ namespace Glaze
 	extern const TCHAR* MasterPackagePath; // /Game/Glaze/M_Glaze
 	extern const TCHAR* MasterObjectPath;  // /Game/Glaze/M_Glaze.M_Glaze
 
-	/** Loads the master, creating or rebuilding it when missing or older than MasterVersion. Saves it when changed. */
-	UMaterial* EnsureMaster(bool bSave = true);
+	/**
+	 * Loads the master, creating or rebuilding it when missing or older than MasterVersion. Saves it when changed.
+	 * Null when it cannot be built (e.g. the user kept an open Material Editor of it); OutError then says why.
+	 */
+	UMaterial* EnsureMaster(bool bSave = true, FString* OutError = nullptr);
+
+	/** Unsaved master and default textures: saved together with every instance, so an instance never points at an unsaved master. */
+	TArray<UPackage*> DirtyMasterPackages();
 
 	/** Rebuilds the expression graph of Material (clears existing expressions). Exposed for tests. */
 	void BuildMasterGraph(UMaterial* Material);
@@ -43,6 +49,7 @@ namespace Glaze
 		extern const FName NormalStrength, FlipGreen;
 		extern const FName UseOpacity, OpacityAmount, Dithered;
 		extern const FName UseEmissive, EmissiveFromBaseColor, EmissiveColor, EmissiveIntensity;
+		extern const FName UseDetailBump;
 		extern const FName UseDetail, DetailFromTexture, DetailUV, DetailLocal, DetailPreSkinned, DetailMap;
 		extern const FName DetailTiling, DetailSize, DetailContrast, DetailBias, DetailColor, DetailColorAmount, DetailRoughness, DetailBump;
 		extern const FName UseMacro, MacroSize, MacroTiling, MacroAmount, MacroRoughness;

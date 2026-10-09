@@ -414,7 +414,11 @@ void SGlazeWindow::OnRecipeChanged(const FPropertyChangedEvent& Event)
 			Recipe->BlendMode = EGlazeBlend::Masked;
 		}
 	}
-	RefreshPreview();
+	// The clip value is compiled into the shader: recompile once on release, not on every step of a drag.
+	if (Event.ChangeType != EPropertyChangeType::Interactive || Name != GET_MEMBER_NAME_CHECKED(UGlazeRecipe, OpacityClip))
+	{
+		RefreshPreview();
+	}
 	if (Event.ChangeType != EPropertyChangeType::Interactive)
 	{
 		RefreshInfo();
@@ -566,7 +570,15 @@ bool SGlazeWindow::CreateCurrent()
 {
 	FString Error;
 	UMaterialInstanceConstant* Target = EditTarget.IsValid() ? EditTarget.Get() : UnsavedInstance.Get();
-	UMaterialInstanceConstant* MI = Glaze::WriteInstanceAsset(*Recipe, Target, Error);
+	TArray<UTexture2D*> FixedEarlier;
+	for (const TPair<TWeakObjectPtr<UTexture2D>, FTextureState>& Pair : FixedTextures)
+	{
+		if (UTexture2D* T = Pair.Key.Get())
+		{
+			FixedEarlier.Add(T);
+		}
+	}
+	UMaterialInstanceConstant* MI = Glaze::WriteInstanceAsset(*Recipe, Target, Error, FixedEarlier);
 	if (!MI || !Error.IsEmpty())
 	{
 		// Created but not saved: keep the window, the next Create retries the save on the same asset.

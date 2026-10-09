@@ -81,10 +81,20 @@ namespace
 		return nullptr;
 	}
 
-	/** Unicode-aware case folding (FString::ToLower only folds ASCII; FText goes through ICU). Used for set keys. */
+	/** Case folding for set keys: ASCII first (locale independent, so Turkish "I" stays "i"), then ICU for the rest (Cyrillic etc.). */
 	FString FoldCase(const FString& In)
 	{
-		return FText::FromString(In).ToLower().ToString();
+		const FString Ascii = In.ToLower();
+		bool bAscii = true;
+		for (const TCHAR C : Ascii)
+		{
+			if (C > 127)
+			{
+				bAscii = false;
+				break;
+			}
+		}
+		return bAscii ? Ascii : FText::FromString(Ascii).ToLower().ToString();
 	}
 
 	bool IsResolutionToken(const FString& Token)
@@ -95,6 +105,17 @@ namespace
 			return true; // 1k, 2k, 4k, 8k
 		}
 		return L == TEXT("512") || L == TEXT("1024") || L == TEXT("2048") || L == TEXT("4096") || L == TEXT("8192");
+	}
+
+	/** One key per resolution: "2048" and "2K" are the same ("1k", "2k", "4k", "8k", "512"). */
+	FString NormalizeResolution(const FString& Token)
+	{
+		const FString L = Token.ToLower();
+		if (L == TEXT("1024")) return TEXT("1k");
+		if (L == TEXT("2048")) return TEXT("2k");
+		if (L == TEXT("4096")) return TEXT("4k");
+		if (L == TEXT("8192")) return TEXT("8k");
+		return L;
 	}
 }
 
@@ -114,7 +135,7 @@ FNameMatch MatchTextureName(const FString& AssetName)
 	{
 		if (IsResolutionToken(T))
 		{
-			Result.Resolution = T.ToLower();
+			Result.Resolution = NormalizeResolution(T);
 			break;
 		}
 	}
@@ -129,7 +150,7 @@ FNameMatch MatchTextureName(const FString& AssetName)
 	// Two last tokens joined first ("Base_Color", "Normal_GL", "Ambient_Occlusion"), then the last one.
 	int32 Consumed = 0;
 	const FSuffixRule* Rule = nullptr;
-	if (Tokens.Num() >= 3)
+	if (Tokens.Num() >= 2)
 	{
 		Rule = FindRule(Tokens[Tokens.Num() - 2] + Tokens.Last());
 		Consumed = Rule ? 2 : 0;

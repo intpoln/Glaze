@@ -36,7 +36,6 @@ namespace
 		static bool bLoaded = false;
 		if (!bLoaded)
 		{
-			bLoaded = true;
 			FString Text;
 			TSharedPtr<FJsonObject> Json;
 			if (FFileHelper::LoadFileToString(Text, *(SourceDir() / TEXT("pack.json")))
@@ -44,6 +43,7 @@ namespace
 			{
 				Json->TryGetStringArrayField(TEXT("materials"), Cached.Materials);
 				Json->TryGetStringArrayField(TEXT("noises"), Cached.Noises);
+				bLoaded = true;
 			}
 			else
 			{

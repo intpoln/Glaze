@@ -89,6 +89,7 @@ namespace Param
 	const FName UseDetail(TEXT("Use Detail Noise")), DetailFromTexture(TEXT("Detail Noise From Texture")), DetailUV(TEXT("Detail In UV Space"));
 	const FName DetailLocal(TEXT("Detail In Local Space")), DetailPreSkinned(TEXT("Detail In Pre-Skinned Space")), DetailMap(TEXT("Detail Noise Map"));
 	const FName DetailTiling(TEXT("Detail Tiling")), DetailSize(TEXT("Detail Size")), DetailContrast(TEXT("Detail Contrast")), DetailBias(TEXT("Detail Bias"));
+	const FName UseDetailBump(TEXT("Use Detail Bump"));
 	const FName DetailColor(TEXT("Detail Color")), DetailColorAmount(TEXT("Detail Color Amount")), DetailRoughness(TEXT("Detail Roughness")), DetailBump(TEXT("Detail Bump"));
 	const FName UseMacro(TEXT("Use Macro Variation")), MacroSize(TEXT("Macro Size")), MacroTiling(TEXT("Macro Tiling"));
 	const FName MacroAmount(TEXT("Macro Amount")), MacroRoughness(TEXT("Macro Roughness"));
@@ -245,15 +246,19 @@ namespace
 		FPin DDY(const FPin& A) { return Unary(A, &UMaterialExpressionDDY::Value); }
 		FPin Sign(const FPin& A) { return Unary(A, &UMaterialExpressionSign::Input); }
 		FPin Normalize(const FPin& A) { return Unary(A, &UMaterialExpressionNormalize::VectorInput); }
-		/** Procedural gradient noise in [0, 1]; Position is already scaled. */
+		/** Procedural gradient noise within [0, 1]; Position is already scaled. */
 		FPin Noise(const FPin& Position, int32 Levels)
 		{
 			auto* E = New<UMaterialExpressionNoise>();
 			E->Scale = 1.f;
 			E->NoiseFunction = NOISEFUNCTION_GradientTex3D;
 			E->Levels = Levels;
-			E->OutputMin = 0.f;
-			E->OutputMax = 1.f;
+			// Octaves are summed with weights 1, 1/2, 1/4...: rescale that sum from [-Total, Total] (mapped to 0..1 by the
+			// node as Sum * 0.5 + 0.5) back into [0, 1].
+			E->bTurbulence = false;
+			const float Total = 2.f - FMath::Pow(2.f, 1.f - Levels);
+			E->OutputMin = 0.5f - 0.5f / Total;
+			E->OutputMax = 0.5f + 0.5f / Total;
 			Link(E->Position, Position);
 			return { E };
 		}
@@ -523,7 +528,7 @@ void BuildMasterGraph(UMaterial* Material)
 		const FPin MacroUV = G.Append(G.Mul({ TexCoord }, G.Scalar(Param::MacroTiling, 0.25f, GroupNoise, 0.01f, 4.f)), G.Const(0.f));
 		const FPin MacroP = G.Div(Position, G.Scalar(Param::MacroSize, 1000.f, GroupNoise, 50.f, 5000.f));
 		const FPin M = G.Noise(G.Switch(Param::DetailUV, MacroUV, MacroP, GroupNoise), 3);
-		Macro = G.Sub(G.Mul(M, G.Const(2.f)), G.Const(1.f));
+		Macro = G.Sub(G.Mul(G.Saturate(M), G.Const(2.f)), G.Const(1.f));
 	}
 
 	// ---- Base color ----
@@ -598,7 +603,8 @@ void BuildMasterGraph(UMaterial* Material)
 		};
 		const FPin ByTriplanar = G.Switch(Param::TriplanarLocal, ToTangent(TRANSFORMSOURCE_Local), ToTangent(TRANSFORMSOURCE_World), GroupUV);
 		const FPin Normal = G.Switch(Param::Triplanar, ByTriplanar, ByUV, GroupUV);
-		const FPin Base = G.Switch(Param::UseMap(EGlazeSlot::Normal), Normal, G.Const3(FLinearColor(0, 0, 1)), GroupNormal);
+		// Normalized: strength scales only XY, and the whiteout blend below multiplies the Z of both normals.
+		const FPin Base = G.Switch(Param::UseMap(EGlazeSlot::Normal), G.Normalize(Normal), G.Const3(FLinearColor(0, 0, 1)), GroupNormal);
 
 		// Detail bump from screen-space derivatives of the detail height (works in every noise space, no extra samples).
 		auto* CameraPos = G.New<UMaterialExpressionWorldPosition>();
@@ -617,7 +623,7 @@ void BuildMasterGraph(UMaterial* Material)
 		// Whiteout blend with the map normal.
 		const FPin Bumped = G.Normalize(G.Append(G.Add(G.Mask(Base, true, true), G.Mask({ BumpTS }, true, true)),
 			G.Mul(G.Mask(Base, false, false, true), G.Mask({ BumpTS }, false, false, true))));
-		Link(Out->Normal, G.Switch(Param::UseDetail, Bumped, Base, GroupNoise));
+		Link(Out->Normal, G.Switch(Param::UseDetailBump, Bumped, Base, GroupNoise));
 	}
 
 	// ---- Grayscale channels: own map or a channel of the shared packed map, remapped; or a constant ----
@@ -698,8 +704,31 @@ bool IsGlazeMaster(const UObject* Material)
 	return Material && Material->GetPathName() == MasterObjectPath;
 }
 
-UMaterial* EnsureMaster(bool bSave)
+TArray<UPackage*> DirtyMasterPackages()
 {
+	TArray<UPackage*> Packages;
+	for (const TCHAR* Name : { MasterPackagePath, TEXT("/Game/Glaze/T_Glaze_DefaultMask"), TEXT("/Game/Glaze/T_Glaze_DefaultGray") })
+	{
+		UPackage* Package = FindPackage(nullptr, Name);
+		if (Package && Package->IsDirty())
+		{
+			Packages.Add(Package);
+		}
+	}
+	return Packages;
+}
+
+UMaterial* EnsureMaster(bool bSave, FString* OutError)
+{
+	auto Fail = [OutError](const FString& Error) -> UMaterial*
+	{
+		UE_LOG(LogGlazeMaster, Error, TEXT("%s"), *Error);
+		if (OutError)
+		{
+			*OutError = Error;
+		}
+		return nullptr;
+	};
 	UMaterial* Material = LoadObject<UMaterial>(nullptr, MasterObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
 	if (!Material)
 	{
@@ -709,8 +738,7 @@ UMaterial* EnsureMaster(bool bSave)
 			UMaterial::StaticClass(), Factory));
 		if (!Material)
 		{
-			UE_LOG(LogGlazeMaster, Error, TEXT("Could not create %s"), MasterPackagePath);
-			return nullptr;
+			return Fail(FString::Printf(TEXT("Could not create %s"), MasterPackagePath));
 		}
 	}
 
@@ -728,10 +756,16 @@ UMaterial* EnsureMaster(bool bSave)
 	}
 
 	UE_LOG(LogGlazeMaster, Display, TEXT("Building %s (version %d -> %d)"), MasterPackagePath, Version, MasterVersion);
-	// An open Material Editor works on its own copy and would write the old graph back on Apply.
+	// An open Material Editor works on its own copy and would write the old graph back on Apply. It asks to save
+	// unapplied changes, and Cancel keeps it open: then the update waits for the next try.
 	if (GEditor)
 	{
-		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Material);
+		UAssetEditorSubsystem* Editors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+		Editors->CloseAllEditorsForAsset(Material);
+		if (Editors->FindEditorsForAsset(Material).Num() > 0)
+		{
+			return Fail(FString::Printf(TEXT("%s needs an update by Glaze: close its Material Editor and try again."), MasterPackagePath));
+		}
 	}
 	CreatedDefaultPackages.Reset();
 	Material->PreEditChange(nullptr);
@@ -751,7 +785,8 @@ UMaterial* EnsureMaster(bool bSave)
 		Packages.Add(Package);
 		if (!UEditorLoadingAndSavingUtils::SavePackages(Packages, /*bOnlyDirty*/ false))
 		{
-			UE_LOG(LogGlazeMaster, Error, TEXT("Could not save %s; it will be rebuilt next time"), MasterPackagePath);
+			// Still usable now; every instance write retries the save (DirtyMasterPackages).
+			UE_LOG(LogGlazeMaster, Error, TEXT("Could not save %s"), MasterPackagePath);
 		}
 	}
 	CreatedDefaultPackages.Reset();

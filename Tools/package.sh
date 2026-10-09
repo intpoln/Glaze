@@ -15,7 +15,10 @@ TMP="$DIR/Glaze.new"
 mkdir -p "$DIR"
 rm -rf "$TMP"
 PLUGIN=$(cygpath -w "$ROOT/GlazeLab/Plugins/Glaze/Glaze.uplugin")
-cmd //c "\"$UAT\" BuildPlugin -Plugin=\"$PLUGIN\" -Package=\"$(cygpath -w "$TMP")\" -TargetPlatforms=Win64 -Rocket" > "$DIR/package_log.txt" 2>&1
+PKG=$(cygpath -w "$TMP")
+case "$PLUGIN$PKG" in *"'"*) echo "paths with ' are not supported"; exit 2;; esac
+# PowerShell passes each quoted argument intact (cmd //c with escaped quotes breaks under Git Bash).
+powershell.exe -NoProfile -Command "& '$UAT' BuildPlugin '-Plugin=$PLUGIN' '-Package=$PKG' -TargetPlatforms=Win64 -Rocket; exit \$LASTEXITCODE" > "$DIR/package_log.txt" 2>&1
 CODE=$?
 tail -3 "$DIR/package_log.txt"
 if [ $CODE -ne 0 ] || ! grep -q "BUILD SUCCESSFUL" "$DIR/package_log.txt" || [ ! -f "$TMP/Glaze.uplugin" ]; then
@@ -23,7 +26,18 @@ if [ $CODE -ne 0 ] || ! grep -q "BUILD SUCCESSFUL" "$DIR/package_log.txt" || [ !
 	rm -rf "$TMP"
 	exit 1
 fi
-rm -rf "$TMP/HostProject" "$OUT"
-mv "$TMP" "$OUT"
-ls "$OUT" "$OUT/Binaries/Win64"
+rm -rf "$TMP/HostProject" || { echo "cannot remove $TMP/HostProject"; exit 1; }
+# Swap: keep the old package until the new one is in place, restore it on failure.
+OLD="$DIR/Glaze.old"
+rm -rf "$OLD" || { echo "cannot remove $OLD"; exit 1; }
+if [ -d "$OUT" ]; then
+	mv -T "$OUT" "$OLD" || { echo "cannot move the previous package aside: $OUT"; exit 1; }
+fi
+if ! mv -T "$TMP" "$OUT"; then
+	echo "cannot move the new package into place"
+	[ -d "$OLD" ] && mv -T "$OLD" "$OUT" && echo "previous package restored"
+	exit 1
+fi
+rm -rf "$OLD" || echo "warning: could not remove $OLD"
+ls "$OUT" "$OUT/Binaries/Win64" || exit 1
 du -sh "$OUT"

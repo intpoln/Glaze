@@ -93,6 +93,11 @@ def build(tmp, materials, noises):
 
 
 def main():
+    # A previous run was interrupted between the two renames: bring the old pack back first.
+    backup = DEST + ".old"
+    if not os.path.isdir(DEST) and os.path.isdir(backup):
+        os.rename(backup, DEST)
+        print(f"restored the previous pack from {backup}")
     materials, noises, problems = validate()
     if problems:
         print(f"pack NOT built, {len(problems)} problem(s); existing pack left untouched:")
@@ -102,10 +107,12 @@ def main():
     if "--check" in sys.argv[1:]:
         print(f"check OK: {len(materials)} materials, {len(noises)} noises")
         return
-    tmp, backup = DEST + ".new", DEST + ".old"
-    for d in (tmp, backup):
-        if os.path.isdir(d):
-            shutil.rmtree(d)
+    tmp = DEST + ".new"
+    if os.path.isdir(tmp):
+        shutil.rmtree(tmp)
+    # DEST exists here (restored above or never missing), so a stale .old is safe to drop.
+    if os.path.isdir(DEST) and os.path.isdir(backup):
+        shutil.rmtree(backup)
     try:
         build(tmp, materials, noises)
     except Exception:

@@ -143,6 +143,16 @@ TArray<FTextureFix> PlanTextureFixes(const UGlazeRecipe& Recipe, TArray<FString>
 			continue;
 		}
 		const EUse Use = *Pair.Value.CreateConstIterator();
+		const bool bHDR = T->CompressionSettings == TC_HDR || T->CompressionSettings == TC_HDR_Compressed || T->CompressionSettings == TC_HDR_F32;
+		if (Use == EUse::Color && bHDR)
+		{
+			// UE keeps HDR textures linear, and the master samples color as sRGB.
+			if (OutWarnings)
+			{
+				OutWarnings->Add(FString::Printf(TEXT("%s is HDR: use an 8-bit texture for color/emissive, or set its compression to Default."), *T->GetName()));
+			}
+			continue;
+		}
 		TArray<FString> Changes;
 		switch (Use)
 		{
@@ -320,6 +330,7 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	const bool bDetail = R.bDetailNoise;
 	const bool bNoise = bDetail || R.bMacroVariation;
 	Switches.Add({ UseDetail, bDetail });
+	Switches.Add({ UseDetailBump, bDetail && R.DetailBump != 0.f });
 	Switches.Add({ UseMacro, R.bMacroVariation });
 	Switches.Add({ DetailFromTexture, bDetail && R.DetailNoise != nullptr });
 	Switches.Add({ DetailUV, bNoise && R.DetailSpace == EGlazeDetailSpace::UV });
@@ -388,39 +399,46 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 			Statics.StaticSwitchParameters.Emplace(Info, S.Value, true, Guid);
 		}
 	}
-	FMaterialInstanceBasePropertyOverrides& O = MI->BasePropertyOverrides;
+	// A copy: UpdateStaticPermutation recompiles only when the overrides differ from the instance's current ones.
+	FMaterialInstanceBasePropertyOverrides O = MI->BasePropertyOverrides;
 	O.bOverride_BlendMode = bMasked;
 	O.BlendMode = bMasked ? BLEND_Masked : BLEND_Opaque;
 	O.bOverride_OpacityMaskClipValue = bMasked;
 	O.OpacityMaskClipValue = R.OpacityClip;
 	O.bOverride_TwoSided = R.bTwoSided;
 	O.TwoSided = R.bTwoSided;
-	MI->UpdateStaticPermutation(Statics);
+	MI->UpdateStaticPermutation(Statics, O);
 	MI->PreEditChange(nullptr);
 	MI->PostEditChange();
 	MI->MarkPackageDirty();
 }
 
-UMaterialInstanceConstant* WriteInstanceAsset(const UGlazeRecipe& Recipe, UMaterialInstanceConstant* Existing, FString& OutError)
+UMaterialInstanceConstant* WriteInstanceAsset(const UGlazeRecipe& Recipe, UMaterialInstanceConstant* Existing, FString& OutError,
+	const TArray<UTexture2D*>& FixedEarlier)
 {
-	UMaterial* Master = EnsureMaster();
+	UMaterial* Master = EnsureMaster(true, &OutError);
 	if (!Master)
 	{
-		OutError = TEXT("Could not create the Glaze master material.");
+		if (OutError.IsEmpty())
+		{
+			OutError = TEXT("Could not create the Glaze master material.");
+		}
 		return nullptr;
 	}
 
+	TArray<UTexture2D*> Fixed = FixedEarlier;
 	if (Recipe.bFixTextureSettings)
 	{
-		FixTextureSettings(Recipe);
+		Fixed.Append(FixTextureSettings(Recipe));
 	}
-	// Textures fixed now or earlier by the preview: the instance's samplers rely on their saved settings.
+	// The instance's samplers rely on the fixed settings being saved.
+	const TMap<UTexture2D*, TSet<EUse>> Uses = CollectUses(Recipe);
 	TArray<UPackage*> ToSave;
-	for (const TPair<UTexture2D*, TSet<EUse>>& Use : CollectUses(Recipe))
+	for (UTexture2D* T : Fixed)
 	{
-		if (Use.Key->GetPackage()->IsDirty())
+		if (T && Uses.Contains(T) && T->GetPackage()->IsDirty())
 		{
-			ToSave.AddUnique(Use.Key->GetPackage());
+			ToSave.AddUnique(T->GetPackage());
 		}
 	}
 
@@ -452,6 +470,10 @@ UMaterialInstanceConstant* WriteInstanceAsset(const UGlazeRecipe& Recipe, UMater
 	MI->GetPackage()->GetMetaData().SetValue(MI, MetaRecipeKey, *Recipe.ToJson());
 	MI->MarkPackageDirty();
 	ToSave.Add(MI->GetPackage());
+	for (UPackage* Package : DirtyMasterPackages())
+	{
+		ToSave.AddUnique(Package);
+	}
 	if (!UEditorLoadingAndSavingUtils::SavePackages(ToSave, /*bOnlyDirty*/ true))
 	{
 		TArray<FString> Unsaved;
@@ -489,9 +511,11 @@ bool ReadRecipe(const UMaterialInstanceConstant* Instance, UGlazeRecipe& OutReci
 	for (int32 I = 0; I < static_cast<int32>(EGlazeSlot::Num); ++I)
 	{
 		const EGlazeSlot Slot = static_cast<EGlazeSlot>(I);
-		if (OutRecipe.GetSlot(Slot))
+		// The override is the texture the instance really samples: after a rename the stored path may be empty, or
+		// may point to a different texture that took over the old name.
+		if (!ActiveSlot(OutRecipe, Slot) && OutRecipe.GetSlot(Slot))
 		{
-			continue;
+			continue; // not sampled, so no override to compare with
 		}
 		UTexture2D* T = Override(Param::Map(Slot));
 		bool bFromPacked = false;
@@ -505,9 +529,12 @@ bool ReadRecipe(const UMaterialInstanceConstant* Instance, UGlazeRecipe& OutReci
 			OutRecipe.SetSlot(Slot, T, OutRecipe.GetChannel(Slot));
 		}
 	}
-	if (OutRecipe.bDetailNoise && !OutRecipe.DetailNoise)
+	if (OutRecipe.bDetailNoise)
 	{
-		OutRecipe.DetailNoise = Override(Param::DetailMap);
+		if (UTexture2D* T = Override(Param::DetailMap))
+		{
+			OutRecipe.DetailNoise = T;
+		}
 	}
 	return true;
 }

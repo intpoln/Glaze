@@ -25,7 +25,7 @@ namespace Glaze
 		TArray<FSlotMatch> Slots;
 		/** The token that decided the match, for the UI ("_N"). */
 		FString Reason;
-		/** Lower-case resolution token that was removed ("4k", "2048"), empty when the name has none. */
+		/** Lower-case resolution token that was removed ("4k", "2k"), empty when the name has none. */
 		FString Resolution;
 	};
 

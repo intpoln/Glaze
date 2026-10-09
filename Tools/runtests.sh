@@ -13,4 +13,7 @@ CODE=$?
 grep -E "Test Completed|Error:|error:|Expected|EXIT CODE|tests performed" "$LOG" | grep -v "LogAutomationController: Display: Loading" | head -100
 grep -q "Test Completed" "$LOG" || { echo "no tests ran for filter '$F'"; exit 1; }
 if grep -q "Test Completed. Result={Fail" "$LOG"; then exit 1; fi
+# The editor must reach its final marker (a crash after some tests leaves none); its own exit code is not reliable here.
+grep -q "TEST COMPLETE" "$LOG" || { echo "no TEST COMPLETE marker: the editor crashed or stopped early (editor exit $CODE)"; exit 1; }
+grep "TEST COMPLETE" "$LOG" | grep -q "EXIT CODE: 0" || { echo "tests finished with a non-zero exit code in the log"; exit 1; }
 exit 0

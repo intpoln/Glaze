@@ -1,8 +1,13 @@
 #!/bin/bash
 # Parallel read-only Codex reviews: one agent per independent slice of the code base.
-# usage: Tools/review/run_review.sh <out dir>   -> <out dir>/<slice>.md
+# usage: Tools/review/run_review.sh <out dir> [previous review dir] [slice ...]   -> <out dir>/<slice>.md
+#   previous review dir: its <slice>.md is given to the reviewer to verify the fixes instead of re-reporting them.
+#   slices: master apply window matcher tests texgen memory (default: all)
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=${1:?out dir}
+PREV=${2:-}
+shift $(( $# < 2 ? $# : 2 ))
+ONLY=" $* "
 mkdir -p "$OUT"
 SRC=GlazeLab/Plugins/Glaze/Source/GlazeEditor/Private
 
@@ -12,7 +17,11 @@ COMMON="Ты ревьюер кода. Проект: Glaze — editor-плаги�
 
 run() {
 	local name=$1; shift
-	codex exec -s read-only -C "$ROOT" -o "$OUT/$name.md" "$COMMON
+	[ "$ONLY" = "  " ] || [[ "$ONLY" == *" $name "* ]] || return 0
+	local prev=""
+	[ -n "$PREV" ] && [ -f "$PREV/$name.md" ] && prev="
+Это повторное ревью. Предыдущий отчёт по участку: $PREV/$name.md (находки из него исправлялись, см. git log). Проверь, что каждое исправление сделано правильно и не внесло новых багов; уже исправленное не повторяй, неисправленное отметь одной строкой. Основной фокус — новые находки."
+	codex exec -s read-only -C "$ROOT" -o "$OUT/$name.md" "$COMMON$prev
 
 ТВОЙ УЧАСТОК: $*" < /dev/null > "$OUT/$name.log" 2>&1
 	echo "done $name: $(wc -c < "$OUT/$name.md" 2>/dev/null) bytes"
@@ -24,5 +33,6 @@ run window "$SRC/SGlazeWindow.cpp, $SRC/SGlazeWindow.h, $SRC/GlazeEditorModule.c
 run matcher "$SRC/GlazeMatcher.cpp, $SRC/GlazeMatcher.h, $SRC/GlazePack.cpp, $SRC/GlazePack.h, плюс GlazeLab/Plugins/Glaze/Resources/Pack/pack.json и структура папок пака (не открывай PNG). Матчер имён текстур (суффиксы BaseColor/Albedo/Diffuse/N/Normal/ORM/ARM/Roughness/Gloss/AO/Metallic/Height/Opacity/Emissive, разрешения 1K/2K/4K, группировка нескольких наборов, регистр, цифры, вложенные подчёркивания, кириллица, коллизии вроде 'Concrete' vs 'Conc_N', 'Normal' внутри имени). Придумай 15-20 реальных имён из Quixel/Poly Haven/ambientCG/Substance и проверь по коду, что получится. Импорт пака: повторный импорт, частично удалённые ассеты, пути, сохранение, настройки сжатия, поведение без pack.json, упакованный плагин (BaseDir в Marketplace/Engine Plugins)." &
 run tests "$SRC/Tests/GlazeTests.cpp, $SRC/../GlazeEditor.Build.cs, GlazeLab/Plugins/Glaze/Glaze.uplugin, Tools/build.sh, Tools/runtests.sh, Tools/package.sh. Качество тестов: что реально проверяется, что пропущено (дыры покрытия по сравнению с фичами в docs/ROADMAP.md и CHECKLIST.md), хрупкие места (тесты пишут в /Game? зависят от порядка?), ложнозелёные проверки. Uplugin/Build.cs: лишние/недостающие зависимости, LoadingPhase, тип модуля (Editor), готовность к упаковке и к переносу на UE 5.7, что попадёт в пакет. Скрипты: ошибки, пути с пробелами, коды возврата." &
 run texgen "Tools/texgen/ (receiver.py, materials.js, package_pack.py, contact_sheet.py; папку Tools/texgen/ptl не читай — это сторонний клон), TexturePack/graphs (выборочно 2-3 файла). Конвейер генерации пака текстур: безопасность локального сервера receiver.py (на что он отвечает, path traversal при /save, привязка к 127.0.0.1), корректность нормалей (DirectX), каналы ORM, бесшовность, повторяемость сборки, понятность для следующего человека. Плюс: идеи, как сделать пак полезнее для пользователей плагина (какие материалы/нойзы добавить)." &
+run memory "весь C++ в $SRC (кроме Tests). Только память и производительность редактора: утечки UObject и Slate, жизненный цикл (окно, рецепт, preview-инстанс, делегаты, FGCObject), пики памяти (импорт пака 2K/1K, батч на много наборов, загрузка всех текстур сразу, перекомпрессия текстур при FixTextureSettings, компиляция шейдеров пермутаций при каждом изменении статического свитча в превью), время отклика окна при перетаскивании слайдера (что выполняется на каждое Interactive-изменение), лишние сохранения пакетов. Для каждой находки — оценка величины (МБ / мс / число объектов) или как её измерить (stat memory, memreport, obj list, Insights)." &
 wait
 echo ALL DONE
