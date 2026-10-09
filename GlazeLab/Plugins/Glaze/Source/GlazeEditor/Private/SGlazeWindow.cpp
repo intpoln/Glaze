@@ -17,6 +17,8 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "PropertyEditorModule.h"
 #include "ScopedTransaction.h"
+#include "UObject/ObjectSaveContext.h"
+#include "UObject/Package.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -66,6 +68,14 @@ void SGlazeWindow::Construct(const FArguments& InArgs)
 	Args.bShowOptions = false;
 	Args.bAllowSearch = true;
 	Details = PropertyEditor.CreateDetailView(Args);
+	// Apply updates the existing asset in place: it does not rename or move it.
+	Details->SetIsPropertyVisibleDelegate(FIsPropertyVisible::CreateLambda([this](const FPropertyAndParent& P)
+	{
+		const FName Name = P.Property.GetFName();
+		return !EditTarget.IsValid()
+			|| (Name != GET_MEMBER_NAME_CHECKED(UGlazeRecipe, AssetName) && Name != GET_MEMBER_NAME_CHECKED(UGlazeRecipe, Folder));
+	}));
+	BindEditorEvents();
 
 	ChildSlot
 	[
@@ -95,9 +105,10 @@ void SGlazeWindow::Construct(const FArguments& InArgs)
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
 			[
 				SNew(SCheckBox)
+				.IsEnabled_Lambda([this] { return Sets.Num() <= 1 || EditTarget.IsValid(); })
 				.IsChecked_Lambda([this] { return bAssignToSelection ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
 				.OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bAssignToSelection = S == ECheckBoxState::Checked; })
-				.ToolTipText(LOCTEXT("AssignTip", "After Create, the new material stays on the meshes selected in the level (undoable). Otherwise their materials are restored."))
+				.ToolTipText(LOCTEXT("AssignTip", "After Create, the new material stays on the meshes selected in the level (undoable). Otherwise their materials are restored.\nNot available for several texture sets: the meshes only preview them."))
 				[
 					SNew(STextBlock).Text(LOCTEXT("Assign", "Keep on selected meshes"))
 				]
@@ -131,7 +142,9 @@ void SGlazeWindow::Construct(const FArguments& InArgs)
 
 SGlazeWindow::~SGlazeWindow()
 {
+	UnbindEditorEvents();
 	RestoreTargets();
+	RevertTextureFixes();
 	if (Recipe)
 	{
 		Recipe->OnChanged.RemoveAll(this);
@@ -143,6 +156,52 @@ void SGlazeWindow::AddReferencedObjects(FReferenceCollector& Collector)
 	for (FTarget& Target : Targets)
 	{
 		Collector.AddReferencedObjects(Target.OriginalOverrides);
+	}
+	// A deleted texture is nulled here instead of leaving a dangling pointer in the queue.
+	for (TPair<FString, TArray<TObjectPtr<UTexture2D>>>& Set : Sets)
+	{
+		Collector.AddReferencedObjects(Set.Value);
+	}
+}
+
+void SGlazeWindow::BindEditorEvents()
+{
+	UPackage::PreSavePackageWithContextEvent.AddSPLambda(this, [this](UPackage* Package, FObjectPreSaveContext)
+	{
+		for (const FTarget& Target : Targets)
+		{
+			if (Target.Component.IsValid() && Target.Component->GetPackage() == Package)
+			{
+				RestoreTargets();
+				return;
+			}
+		}
+	});
+	UPackage::PackageSavedWithContextEvent.AddSPLambda(this, [this](const FString&, UPackage*, FObjectPostSaveContext)
+	{
+		ApplyPreviewToTargets();
+	});
+	for (FSimpleMulticastDelegate* Begin : { &FEditorDelegates::OnDeleteActorsBegin, &FEditorDelegates::OnEditCutActorsBegin,
+		&FEditorDelegates::OnEditCopyActorsBegin, &FEditorDelegates::OnDuplicateActorsBegin })
+	{
+		Begin->AddSP(this, &SGlazeWindow::RestoreTargets);
+	}
+	for (FSimpleMulticastDelegate* End : { &FEditorDelegates::OnDeleteActorsEnd, &FEditorDelegates::OnEditCutActorsEnd,
+		&FEditorDelegates::OnEditCopyActorsEnd, &FEditorDelegates::OnDuplicateActorsEnd })
+	{
+		End->AddSP(this, &SGlazeWindow::ApplyPreviewToTargets);
+	}
+}
+
+void SGlazeWindow::UnbindEditorEvents()
+{
+	UPackage::PreSavePackageWithContextEvent.RemoveAll(this);
+	UPackage::PackageSavedWithContextEvent.RemoveAll(this);
+	for (FSimpleMulticastDelegate* Event : { &FEditorDelegates::OnDeleteActorsBegin, &FEditorDelegates::OnEditCutActorsBegin,
+		&FEditorDelegates::OnEditCopyActorsBegin, &FEditorDelegates::OnDuplicateActorsBegin, &FEditorDelegates::OnDeleteActorsEnd,
+		&FEditorDelegates::OnEditCutActorsEnd, &FEditorDelegates::OnEditCopyActorsEnd, &FEditorDelegates::OnDuplicateActorsEnd })
+	{
+		Event->RemoveAll(this);
 	}
 }
 
@@ -167,7 +226,9 @@ TSharedRef<SGlazeWindow> SGlazeWindow::Open(const FText& Title)
 	{
 		if (TSharedPtr<SGlazeWindow> W = WeakWidget.Pin())
 		{
+			W->UnbindEditorEvents();
 			W->RestoreTargets();
+			W->RevertTextureFixes();
 		}
 	}));
 
@@ -195,11 +256,23 @@ void SGlazeWindow::OpenForTextures(const TArray<UTexture2D*>& Textures, const FS
 	// Names without a recognizable slot give one "set" per texture: then it is one material, not a batch.
 	if (Sets.Num() > 1 && Sets.Num() == Textures.Num())
 	{
-		Sets = { TPair<FString, TArray<UTexture2D*>>(Sets[0].Key, Textures) };
+		bool bAnyMatched = false;
+		for (const TPair<FString, TArray<UTexture2D*>>& Set : Sets)
+		{
+			UGlazeRecipe* Scratch = NewObject<UGlazeRecipe>();
+			bAnyMatched |= Glaze::MatchTextures(Set.Value, *Scratch).Unmatched.Num() < Set.Value.Num();
+		}
+		if (!bAnyMatched)
+		{
+			Sets = { TPair<FString, TArray<UTexture2D*>>(Sets[0].Key, Textures) };
+		}
 	}
 
 	TSharedRef<SGlazeWindow> W = Open(LOCTEXT("TitleCreate", "Glaze: Create Material"));
-	W->Sets = MoveTemp(Sets);
+	for (const TPair<FString, TArray<UTexture2D*>>& Set : Sets)
+	{
+		W->Sets.Emplace(Set.Key, TArray<TObjectPtr<UTexture2D>>(Set.Value));
+	}
 	W->OutputFolder = OutputFolder;
 	W->CapturePreviewTargets();
 	W->StartSet(0, false);
@@ -210,6 +283,20 @@ void SGlazeWindow::OpenForInstance(UMaterialInstanceConstant* Instance)
 	if (!Instance)
 	{
 		return;
+	}
+	// The menu only checks instances that are already loaded.
+	if (!Glaze::IsGlazeInstance(Instance))
+	{
+		Notify(FText::Format(LOCTEXT("NotGlaze", "{0} was not made by Glaze (its parent is not M_Glaze)."), FText::FromString(Instance->GetName())), false);
+		return;
+	}
+	if (TSharedPtr<SGlazeWindow> Existing = GOpenWindow.Pin())
+	{
+		if (Existing->EditTarget == Instance && Existing->Window.IsValid())
+		{
+			Existing->Window.Pin()->BringToFront();
+			return;
+		}
 	}
 	TSharedRef<SGlazeWindow> W = Open(FText::Format(LOCTEXT("TitleEdit", "Glaze: {0}"), FText::FromString(Instance->GetName())));
 	W->EditTarget = Instance;
@@ -240,24 +327,46 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 		Recipe->SetSlot(static_cast<EGlazeSlot>(I), nullptr);
 	}
 
-	const TArray<UTexture2D*>& Textures = Sets[Index].Value;
-	const Glaze::FTextureSetMatch Match = Glaze::MatchTextures(Textures, *Recipe);
-	if (!bKeepSettings)
+	UnsavedInstance.Reset();
+	TArray<UTexture2D*> Textures;
+	int32 Missing = 0;
+	for (UTexture2D* T : Sets[Index].Value)
 	{
-		Recipe->RoughnessRemap.bInvert = Match.bInvertRoughness;
-		Recipe->bFlipGreen = Match.bFlipGreen;
-		Recipe->bEmissive = Recipe->Emissive != nullptr;
-		if (Recipe->Opacity)
+		if (IsValid(T))
 		{
-			Recipe->BlendMode = EGlazeBlend::Masked;
+			Textures.Add(T);
+		}
+		else
+		{
+			++Missing;
 		}
 	}
+	if (Missing > 0)
+	{
+		MatchNotes.Add(FString::Printf(TEXT("Warning: %d texture(s) of this set were deleted."), Missing));
+	}
+	const Glaze::FTextureSetMatch Match = Glaze::MatchTextures(Textures, *Recipe);
+	// These describe the maps of this set, so every set gets its own; the other settings carry over in a batch.
+	Recipe->RoughnessRemap.bInvert = Match.bInvertRoughness;
+	Recipe->bFlipGreen = Match.bFlipGreen;
+	if (Recipe->Emissive || !bKeepSettings)
+	{
+		Recipe->bEmissive = Recipe->Emissive != nullptr;
+	}
+	if (Recipe->Opacity)
+	{
+		Recipe->BlendMode = EGlazeBlend::Masked;
+	}
 	Recipe->AssetName = TEXT("MI_") + (Match.SetName.IsEmpty() ? Sets[Index].Key : Match.SetName);
-	if (!OutputFolder.IsEmpty())
+	if (bFolderEdited)
+	{
+		// keep the folder the user picked
+	}
+	else if (!OutputFolder.IsEmpty())
 	{
 		Recipe->Folder.Path = OutputFolder;
 	}
-	else if (Textures.Num() > 0 && Textures[0])
+	else if (Textures.Num() > 0)
 	{
 		Recipe->Folder.Path = FPackageName::GetLongPackagePath(Textures[0]->GetPackage()->GetName());
 	}
@@ -280,10 +389,7 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 		MatchNotes.Add(TEXT("Height map found: not used by the material yet."));
 	}
 
-	if (Recipe->bFixTextureSettings)
-	{
-		Glaze::FixTextureSettings(*Recipe);
-	}
+	FixTextures();
 	if (!Recipe->OnChanged.IsBoundToObject(this))
 	{
 		Recipe->OnChanged.AddSP(this, &SGlazeWindow::OnRecipeChanged);
@@ -296,12 +402,13 @@ void SGlazeWindow::StartSet(int32 Index, bool bKeepSettings)
 void SGlazeWindow::OnRecipeChanged(const FPropertyChangedEvent& Event)
 {
 	const FName Name = Event.GetMemberPropertyName();
-	if (IsTextureSlotProperty(Name))
+	if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, Folder))
 	{
-		if (Recipe->bFixTextureSettings)
-		{
-			Glaze::FixTextureSettings(*Recipe);
-		}
+		bFolderEdited = true;
+	}
+	if (IsTextureSlotProperty(Name) || Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, DetailNoise))
+	{
+		FixTextures();
 		if (Name == GET_MEMBER_NAME_CHECKED(UGlazeRecipe, Emissive) && Recipe->Emissive)
 		{
 			Recipe->bEmissive = true;
@@ -410,7 +517,9 @@ void SGlazeWindow::ApplyPreviewToTargets()
 		{
 			for (int32 I = 0; I < Component->GetNumMaterials(); ++I)
 			{
-				if (Component->GetMaterial(I) != PreviewInstance.Get())
+				// A slot the user changed while the window is open is theirs: leave it.
+				UMaterialInterface* Current = Component->OverrideMaterials.IsValidIndex(I) ? Component->OverrideMaterials[I].Get() : nullptr;
+				if (Current != PreviewInstance.Get() && Current == Target.Original(I))
 				{
 					Component->SetMaterial(I, PreviewInstance.Get());
 				}
@@ -423,10 +532,18 @@ void SGlazeWindow::RestoreTargets()
 {
 	for (FTarget& Target : Targets)
 	{
-		if (UMeshComponent* Component = Target.Component.Get())
+		UMeshComponent* Component = Target.Component.Get();
+		if (!Component || !PreviewInstance)
 		{
-			Component->OverrideMaterials = Target.OriginalOverrides;
-			Component->MarkRenderStateDirty();
+			continue;
+		}
+		// Only slots still showing the preview: an undo or a material assigned meanwhile is kept.
+		for (int32 I = 0; I < Component->OverrideMaterials.Num(); ++I)
+		{
+			if (Component->OverrideMaterials[I] == PreviewInstance.Get())
+			{
+				Component->SetMaterial(I, Target.Original(I));
+			}
 		}
 	}
 }
@@ -452,12 +569,17 @@ void SGlazeWindow::AssignToTargets(UMaterialInterface* Material)
 bool SGlazeWindow::CreateCurrent()
 {
 	FString Error;
-	UMaterialInstanceConstant* MI = Glaze::WriteInstanceAsset(*Recipe, EditTarget.Get(), Error);
-	if (!MI)
+	UMaterialInstanceConstant* Target = EditTarget.IsValid() ? EditTarget.Get() : UnsavedInstance.Get();
+	UMaterialInstanceConstant* MI = Glaze::WriteInstanceAsset(*Recipe, Target, Error);
+	if (!MI || !Error.IsEmpty())
 	{
+		// Created but not saved: keep the window, the next Create retries the save on the same asset.
+		UnsavedInstance = MI;
 		Notify(FText::FromString(Error), false);
 		return false;
 	}
+	UnsavedInstance.Reset();
+	ForgetSavedTextureFixes();
 	if (bAssignToSelection && Targets.Num() > 0 && (Sets.Num() <= 1 || EditTarget.IsValid()))
 	{
 		AssignToTargets(MI);
@@ -483,8 +605,16 @@ FReply SGlazeWindow::OnCreate()
 
 FReply SGlazeWindow::OnCreateAll()
 {
-	while (CreateCurrent() && HasMoreSets())
+	while (true)
 	{
+		if (!CreateCurrent())
+		{
+			return FReply::Handled(); // stay on the failed set
+		}
+		if (!HasMoreSets())
+		{
+			break;
+		}
 		StartSet(SetIndex + 1, true);
 	}
 	Close();
@@ -515,18 +645,85 @@ void SGlazeWindow::NextOrClose()
 	}
 }
 
-void SGlazeWindow::Close()
+void SGlazeWindow::Close(bool bImmediate)
 {
 	if (bClosing)
 	{
 		return;
 	}
 	bClosing = true;
+	UnbindEditorEvents();
 	RestoreTargets();
+	RevertTextureFixes();
 	if (TSharedPtr<SWindow> W = Window.Pin())
 	{
-		W->RequestDestroyWindow();
+		if (bImmediate)
+		{
+			FSlateApplication::Get().DestroyWindowImmediately(W.ToSharedRef());
+		}
+		else
+		{
+			W->RequestDestroyWindow();
+		}
 	}
+}
+
+void SGlazeWindow::CloseAll()
+{
+	if (TSharedPtr<SGlazeWindow> W = GOpenWindow.Pin())
+	{
+		W->Close(/*bImmediate*/ true);
+	}
+	GOpenWindow.Reset();
+}
+
+void SGlazeWindow::FixTextures()
+{
+	if (!Recipe->bFixTextureSettings)
+	{
+		return;
+	}
+	for (const Glaze::FTextureFix& Fix : Glaze::PlanTextureFixes(*Recipe))
+	{
+		UTexture2D* T = Fix.Texture;
+		if (!FixedTextures.Contains(T))
+		{
+			FixedTextures.Add(T, { T->CompressionSettings, T->SRGB != 0, T->VirtualTextureStreaming != 0, T->GetPackage()->IsDirty() });
+		}
+	}
+	Glaze::FixTextureSettings(*Recipe);
+}
+
+void SGlazeWindow::ForgetSavedTextureFixes()
+{
+	for (auto It = FixedTextures.CreateIterator(); It; ++It)
+	{
+		UTexture2D* T = It.Key().Get();
+		if (!T || !T->GetPackage()->IsDirty())
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+void SGlazeWindow::RevertTextureFixes()
+{
+	ForgetSavedTextureFixes();
+	for (const TPair<TWeakObjectPtr<UTexture2D>, FTextureState>& Pair : FixedTextures)
+	{
+		UTexture2D* T = Pair.Key.Get();
+		const FTextureState& S = Pair.Value;
+		T->PreEditChange(nullptr);
+		T->CompressionSettings = S.Compression;
+		T->SRGB = S.bSRGB;
+		T->VirtualTextureStreaming = S.bVirtual;
+		T->PostEditChange();
+		if (!S.bWasDirty)
+		{
+			T->GetPackage()->SetDirtyFlag(false);
+		}
+	}
+	FixedTextures.Reset();
 }
 
 FText SGlazeWindow::GetCreateLabel() const
@@ -536,6 +733,17 @@ FText SGlazeWindow::GetCreateLabel() const
 		return LOCTEXT("Apply", "Apply");
 	}
 	return HasMoreSets() ? LOCTEXT("CreateNext", "Create & Next") : LOCTEXT("Create", "Create");
+}
+
+FReply SGlazeWindow::OnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent)
+{
+	// Before the focused text field eats Enter; taking the focus first commits its value.
+	if (KeyEvent.GetKey() == EKeys::Enter && KeyEvent.IsControlDown())
+	{
+		FSlateApplication::Get().SetKeyboardFocus(SharedThis(this), EFocusCause::SetDirectly);
+		return OnCreate();
+	}
+	return SCompoundWidget::OnPreviewKeyDown(Geometry, KeyEvent);
 }
 
 FReply SGlazeWindow::OnKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent)

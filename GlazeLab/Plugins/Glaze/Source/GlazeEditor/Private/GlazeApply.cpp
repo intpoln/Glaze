@@ -61,8 +61,20 @@ namespace
 	FLinearColor ChannelMask(EGlazeChannel Channel)
 	{
 		FLinearColor C(0, 0, 0, 0);
-		C.Component(static_cast<int32>(Channel)) = 1.f;
+		C.Component(FMath::Clamp(static_cast<int32>(Channel), 0, 3)) = 1.f;
 		return C;
+	}
+
+	/** The slot's texture when the material samples it: Opacity only when Masked, Emissive only as its own map. */
+	UTexture2D* ActiveSlot(const UGlazeRecipe& R, EGlazeSlot Slot)
+	{
+		switch (Slot)
+		{
+		case EGlazeSlot::Opacity:  return R.BlendMode == EGlazeBlend::Masked ? R.Opacity.Get() : nullptr;
+		case EGlazeSlot::Emissive: return R.bEmissive && !(R.bEmissiveFromBaseColor && R.BaseColor) ? R.Emissive.Get() : nullptr;
+		case EGlazeSlot::Height:   return nullptr; // not sampled yet
+		default:                   return R.GetSlot(Slot);
+		}
 	}
 
 	/** The texture read by two or more grayscale slots becomes the shared "Packed Map": one sample instead of several. */
@@ -71,7 +83,7 @@ namespace
 		TMap<UTexture2D*, int32> Uses;
 		for (EGlazeSlot Slot : GrayscaleSlots)
 		{
-			if (UTexture2D* T = R.GetSlot(Slot))
+			if (UTexture2D* T = ActiveSlot(R, Slot))
 			{
 				if (++Uses.FindOrAdd(T) == 2)
 				{
@@ -89,11 +101,7 @@ namespace
 		for (int32 I = 0; I < static_cast<int32>(EGlazeSlot::Num); ++I)
 		{
 			const EGlazeSlot Slot = static_cast<EGlazeSlot>(I);
-			if (Slot == EGlazeSlot::Height)
-			{
-				continue; // not sampled yet
-			}
-			if (UTexture2D* T = R.GetSlot(Slot))
+			if (UTexture2D* T = ActiveSlot(R, Slot))
 			{
 				Uses.FindOrAdd(T).Add(UseOf(Slot));
 			}
@@ -257,7 +265,7 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	SetTexture(PackedMap, Packed);
 	for (EGlazeSlot Slot : GrayscaleSlots)
 	{
-		UTexture2D* T = R.GetSlot(Slot);
+		UTexture2D* T = ActiveSlot(R, Slot);
 		const bool bFromPacked = T && T == Packed;
 		Switches.Add({ UseMap(Slot), T != nullptr });
 		Switches.Add({ FromPacked(Slot), bFromPacked });
@@ -284,7 +292,7 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	// Emissive
 	Switches.Add({ UseEmissive, R.bEmissive });
 	const bool bEmissiveFromBase = R.bEmissive && R.bEmissiveFromBaseColor && R.BaseColor != nullptr;
-	const bool bEmissiveMap = R.bEmissive && !bEmissiveFromBase && R.Emissive != nullptr;
+	const bool bEmissiveMap = ActiveSlot(R, EGlazeSlot::Emissive) != nullptr;
 	Switches.Add({ EmissiveFromBaseColor, bEmissiveFromBase });
 	Switches.Add({ UseMap(EGlazeSlot::Emissive), bEmissiveMap });
 	SetTexture(Map(EGlazeSlot::Emissive), bEmissiveMap ? R.Emissive.Get() : nullptr);
@@ -320,7 +328,7 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	{
 		Key += S.Value ? TEXT("1") : TEXT("0");
 	}
-	Key += FString::Printf(TEXT("|%d|%d|%.4f"), bMasked ? 1 : 0, R.bTwoSided ? 1 : 0, R.OpacityClip);
+	Key += FString::Printf(TEXT("|%d|%d|%.9g"), bMasked ? 1 : 0, R.bTwoSided ? 1 : 0, R.OpacityClip);
 	if (Key == InOutStaticKey)
 	{
 		if (bRemovedTexture)
@@ -331,9 +339,27 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	}
 	InOutStaticKey = Key;
 
+	// One permutation update for all switches: the library setter builds a UMaterialEditorInstanceConstant proxy per call.
+	FStaticParameterSet Statics = MI->GetStaticParameters();
 	for (const TPair<FName, bool>& S : Switches)
 	{
-		UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MI, S.Key, S.Value, EMaterialParameterAssociation::GlobalParameter, false);
+		const FMaterialParameterInfo Info(S.Key);
+		bool bDefault = false;
+		FGuid Guid;
+		if (MI->Parent)
+		{
+			MI->Parent->GetStaticSwitchParameterDefaultValue(Info, bDefault, Guid);
+		}
+		if (FStaticSwitchParameter* Existing = Statics.StaticSwitchParameters.FindByPredicate([&Info](const FStaticSwitchParameter& P) { return P.ParameterInfo == Info; }))
+		{
+			Existing->Value = S.Value;
+			Existing->bOverride = true;
+			Existing->ExpressionGUID = Guid;
+		}
+		else
+		{
+			Statics.StaticSwitchParameters.Emplace(Info, S.Value, true, Guid);
+		}
 	}
 	FMaterialInstanceBasePropertyOverrides& O = MI->BasePropertyOverrides;
 	O.bOverride_BlendMode = bMasked;
@@ -342,7 +368,10 @@ void ApplyRecipe(UMaterialInstanceConstant* MI, const UGlazeRecipe& R, FString& 
 	O.OpacityMaskClipValue = R.OpacityClip;
 	O.bOverride_TwoSided = R.bTwoSided;
 	O.TwoSided = R.bTwoSided;
-	UMaterialEditingLibrary::UpdateMaterialInstance(MI);
+	MI->UpdateStaticPermutation(Statics);
+	MI->PreEditChange(nullptr);
+	MI->PostEditChange();
+	MI->MarkPackageDirty();
 }
 
 UMaterialInstanceConstant* WriteInstanceAsset(const UGlazeRecipe& Recipe, UMaterialInstanceConstant* Existing, FString& OutError)
@@ -354,12 +383,17 @@ UMaterialInstanceConstant* WriteInstanceAsset(const UGlazeRecipe& Recipe, UMater
 		return nullptr;
 	}
 
-	TArray<UPackage*> ToSave;
 	if (Recipe.bFixTextureSettings)
 	{
-		for (UTexture2D* T : FixTextureSettings(Recipe))
+		FixTextureSettings(Recipe);
+	}
+	// Textures fixed now or earlier by the preview: the instance's samplers rely on their saved settings.
+	TArray<UPackage*> ToSave;
+	for (const TPair<UTexture2D*, TSet<EUse>>& Use : CollectUses(Recipe))
+	{
+		if (Use.Key->GetPackage()->IsDirty())
 		{
-			ToSave.Add(T->GetPackage());
+			ToSave.AddUnique(Use.Key->GetPackage());
 		}
 	}
 
@@ -391,7 +425,18 @@ UMaterialInstanceConstant* WriteInstanceAsset(const UGlazeRecipe& Recipe, UMater
 	MI->GetPackage()->GetMetaData().SetValue(MI, MetaRecipeKey, *Recipe.ToJson());
 	MI->MarkPackageDirty();
 	ToSave.Add(MI->GetPackage());
-	UEditorLoadingAndSavingUtils::SavePackages(ToSave, /*bOnlyDirty*/ true);
+	if (!UEditorLoadingAndSavingUtils::SavePackages(ToSave, /*bOnlyDirty*/ true))
+	{
+		TArray<FString> Unsaved;
+		for (UPackage* Package : ToSave)
+		{
+			if (Package->IsDirty())
+			{
+				Unsaved.Add(Package->GetName());
+			}
+		}
+		OutError = FString::Printf(TEXT("Could not save: %s"), *FString::Join(Unsaved, TEXT(", ")));
+	}
 	return MI;
 }
 
@@ -402,7 +447,42 @@ bool ReadRecipe(const UMaterialInstanceConstant* Instance, UGlazeRecipe& OutReci
 		return false;
 	}
 	const FString& Json = Instance->GetPackage()->GetMetaData().GetValue(Instance, MetaRecipeKey);
-	return !Json.IsEmpty() && OutRecipe.FromJson(Json);
+	if (Json.IsEmpty() || !OutRecipe.FromJson(Json))
+	{
+		return false;
+	}
+	// The recipe stores texture paths as text, which renames do not update. ApplyRecipe writes an override exactly
+	// for the textures it samples, so an empty slot with an override in the instance is a texture that moved.
+	auto Override = [Instance](FName Name) -> UTexture2D*
+	{
+		const FTextureParameterValue* V = Instance->TextureParameterValues.FindByPredicate(
+			[Name](const FTextureParameterValue& P) { return P.ParameterInfo.Name == Name; });
+		return V ? Cast<UTexture2D>(V->ParameterValue) : nullptr;
+	};
+	for (int32 I = 0; I < static_cast<int32>(EGlazeSlot::Num); ++I)
+	{
+		const EGlazeSlot Slot = static_cast<EGlazeSlot>(I);
+		if (Slot == EGlazeSlot::Height || OutRecipe.GetSlot(Slot))
+		{
+			continue;
+		}
+		UTexture2D* T = Override(Param::Map(Slot));
+		bool bFromPacked = false;
+		FGuid Guid;
+		if (!T && IsScalarSlot(Slot) && Instance->GetStaticSwitchParameterValue(FMaterialParameterInfo(Param::FromPacked(Slot)), bFromPacked, Guid) && bFromPacked)
+		{
+			T = Override(Param::PackedMap);
+		}
+		if (T)
+		{
+			OutRecipe.SetSlot(Slot, T, OutRecipe.GetChannel(Slot));
+		}
+	}
+	if (OutRecipe.bDetailNoise && !OutRecipe.DetailNoise)
+	{
+		OutRecipe.DetailNoise = Override(Param::DetailMap);
+	}
+	return true;
 }
 
 bool IsGlazeInstance(const UMaterialInstanceConstant* Instance)

@@ -31,6 +31,7 @@ public:
 
 	virtual void ShutdownModule() override
 	{
+		SGlazeWindow::CloseAll(); // its widgets and GC hooks run code from this module
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
 		if (Style)

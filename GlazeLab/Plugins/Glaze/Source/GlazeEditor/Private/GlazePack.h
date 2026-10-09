@@ -21,9 +21,13 @@ namespace Glaze::Pack
 	/** Content path of a pack texture folder, e.g. /Game/Glaze/Pack/Wood_Planks/2k. */
 	FString ContentFolder(const FString& Name, bool b2k);
 
-	/** Imports (or reuses already imported) BC/N/ORM textures of a pack material. Settings are fixed on import. */
-	TArray<UTexture2D*> ImportMaterial(const FString& Name, bool b2k);
+	/**
+	 * Imports (or reuses already imported) BC/N/ORM textures of a pack material. Settings are fixed on import.
+	 * A map that could not be imported or saved is left out of the result; its file name is added to OutFailed
+	 * (Result.Num() < expected also means a partial pack). Failures are logged as errors and shown as a notification.
+	 */
+	TArray<UTexture2D*> ImportMaterial(const FString& Name, bool b2k, TArray<FString>* OutFailed = nullptr);
 
-	/** Imports (or reuses) one noise texture: linear grayscale. */
+	/** Imports (or reuses) one noise texture: linear grayscale. Null when the import or the save failed (logged as an error). */
 	UTexture2D* ImportNoise(const FString& Name, bool b2k);
 }

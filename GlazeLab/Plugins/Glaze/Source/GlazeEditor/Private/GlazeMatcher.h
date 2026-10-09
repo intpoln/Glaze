@@ -25,6 +25,8 @@ namespace Glaze
 		TArray<FSlotMatch> Slots;
 		/** The token that decided the match, for the UI ("_N"). */
 		FString Reason;
+		/** Lower-case resolution token that was removed ("4k", "2048"), empty when the name has none. */
+		FString Resolution;
 	};
 
 	/** Pure name matching, no asset access. Slots is empty when nothing matched. */
@@ -44,6 +46,11 @@ namespace Glaze
 	/** Fills the recipe slots from the textures. The first texture wins a slot; packed maps fill several slots. */
 	FTextureSetMatch MatchTextures(const TArray<UTexture2D*>& Textures, UGlazeRecipe& Recipe);
 
-	/** Splits textures into sets by name ("Wood_01", "Stone_02"); order of first appearance is kept. */
+	/**
+	 * Splits textures into sets by name ("Wood_01", "Stone_02"); order of first appearance is kept.
+	 * Textures only share a set when they live in the same folder and the name matches (Unicode case-insensitive).
+	 * Different resolutions of one name ("Wood_4K", "Wood_1K") become separate sets ("Wood (4K)"); maps without a
+	 * resolution join the first of them. Equal names from different folders get the folder appended.
+	 */
 	TArray<TPair<FString, TArray<UTexture2D*>>> GroupTextureSets(const TArray<UTexture2D*>& Textures);
 }

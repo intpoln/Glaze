@@ -27,7 +27,11 @@ namespace Glaze
 	 */
 	void ApplyRecipe(UMaterialInstanceConstant* Instance, const UGlazeRecipe& Recipe, FString& InOutStaticKey);
 
-	/** Creates (or updates, when Existing is set) the instance asset, stores the recipe in its metadata and saves it. */
+	/**
+	 * Creates (or updates, when Existing is set) the instance asset, stores the recipe in its metadata and saves it
+	 * together with the textures it uses that have unsaved changes (e.g. fixed settings).
+	 * nullptr + OutError: nothing was created. Instance + OutError: created/updated in memory but not saved.
+	 */
 	UMaterialInstanceConstant* WriteInstanceAsset(const UGlazeRecipe& Recipe, UMaterialInstanceConstant* Existing, FString& OutError);
 
 	/** Recipe saved by WriteInstanceAsset; false when the instance was not made by Glaze. */

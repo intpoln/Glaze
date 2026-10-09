@@ -1,6 +1,10 @@
 #include "GlazeMatcher.h"
 
 #include "Engine/Texture2D.h"
+#include "Algo/Count.h"
+#include "Internationalization/Text.h"
+#include "Misc/PackageName.h"
+#include "UObject/Package.h"
 
 namespace Glaze
 {
@@ -35,7 +39,7 @@ namespace
 			{ TEXT("mrao"), { S(E::Metallic, C::R), S(E::Roughness, C::G), S(E::AmbientOcclusion, C::B) } },
 			{ TEXT("ordp"), { S(E::AmbientOcclusion, C::R), S(E::Roughness, C::G), S(E::Height, C::B) } },
 			{ TEXT("basecolor"), { S(E::BaseColor) } }, { TEXT("albedo"), { S(E::BaseColor) } },
-			{ TEXT("albedotransparency"), { S(E::BaseColor) } },
+			{ TEXT("albedotransparency"), { S(E::BaseColor) } }, // alpha as opacity needs a color-sampled alpha in the master (roadmap)
 			{ TEXT("diffuse"), { S(E::BaseColor) } }, { TEXT("diff"), { S(E::BaseColor) } },
 			{ TEXT("color"), { S(E::BaseColor) } }, { TEXT("colour"), { S(E::BaseColor) } },
 			{ TEXT("col"), { S(E::BaseColor) } }, { TEXT("alb"), { S(E::BaseColor) } },
@@ -77,6 +81,12 @@ namespace
 		return nullptr;
 	}
 
+	/** Unicode-aware case folding (FString::ToLower only folds ASCII; FText goes through ICU). Used for set keys. */
+	FString FoldCase(const FString& In)
+	{
+		return FText::FromString(In).ToLower().ToString();
+	}
+
 	bool IsResolutionToken(const FString& Token)
 	{
 		const FString L = Token.ToLower();
@@ -99,9 +109,17 @@ FNameMatch MatchTextureName(const FString& AssetName)
 	{
 		Tokens.RemoveAt(0);
 	}
+	FNameMatch Result;
+	for (const FString& T : Tokens)
+	{
+		if (IsResolutionToken(T))
+		{
+			Result.Resolution = T.ToLower();
+			break;
+		}
+	}
 	Tokens.RemoveAll([](const FString& T) { return IsResolutionToken(T); });
 
-	FNameMatch Result;
 	if (Tokens.Num() == 0)
 	{
 		Result.SetName = AssetName;
@@ -109,7 +127,6 @@ FNameMatch MatchTextureName(const FString& AssetName)
 	}
 
 	// Two last tokens joined first ("Base_Color", "Normal_GL", "Ambient_Occlusion"), then the last one.
-	// Single-letter tokens only count when something else names the set.
 	int32 Consumed = 0;
 	const FSuffixRule* Rule = nullptr;
 	if (Tokens.Num() >= 3)
@@ -122,20 +139,40 @@ FNameMatch MatchTextureName(const FString& AssetName)
 		Rule = FindRule(Tokens.Last());
 		Consumed = Rule ? 1 : 0;
 	}
-	if (!Rule && Tokens.Num() == 1)
+	if (!Rule)
 	{
-		// "Wood01BaseColor" style: a long suffix glued to the name.
-		const FString Lower = Tokens[0].ToLower();
+		// A lone exact channel name ("Normal", "Roughness"): the set has no name of its own. Short ones ("N", "R") stay ambiguous.
+		if (Tokens.Num() == 1)
+		{
+			const FSuffixRule* Exact = FindRule(Tokens[0]);
+			if (Exact && FString(Exact->Token).Len() >= 4)
+			{
+				Result.Slots = Exact->Slots;
+				Result.Reason = TEXT("_") + Tokens[0];
+				return Result; // SetName stays empty
+			}
+		}
+		// "Wood01BaseColor" / "Wood_Floor01Normal": a long suffix (4+ letters) glued to the last token. Longest suffix wins.
+		const FString Last = Tokens.Last();
+		const FString Lower = Last.ToLower();
+		const FSuffixRule* Best = nullptr;
+		int32 BestLen = 0;
 		for (const FSuffixRule& Candidate : Rules())
 		{
 			const FString Token(Candidate.Token);
-			if (Token.Len() >= 4 && Lower.EndsWith(Token) && Lower.Len() > Token.Len())
+			if (Token.Len() >= 4 && Token.Len() > BestLen && Lower.Len() > Token.Len() && Lower.EndsWith(Token))
 			{
-				Result.SetName = Tokens[0].LeftChop(Token.Len());
-				Result.Slots = Candidate.Slots;
-				Result.Reason = FString::Printf(TEXT("...%s"), *Tokens[0].Right(Token.Len()));
-				return Result;
+				Best = &Candidate;
+				BestLen = Token.Len();
 			}
+		}
+		if (Best)
+		{
+			Tokens.Last() = Last.LeftChop(BestLen);
+			Result.SetName = FString::Join(Tokens, TEXT("_"));
+			Result.Slots = Best->Slots;
+			Result.Reason = FString::Printf(TEXT("...%s"), *Last.Right(BestLen));
+			return Result;
 		}
 	}
 
@@ -180,7 +217,8 @@ FTextureSetMatch MatchTextures(const TArray<UTexture2D*>& Textures, UGlazeRecipe
 			}
 			Out.Reasons.Add(Slot.Slot, Reason);
 			Out.bInvertRoughness |= Slot.bInvert && Slot.Slot == EGlazeSlot::Roughness;
-			Out.bFlipGreen |= Slot.bFlipGreen;
+			// The texture asset may already flip green on import: flipping in the material too would undo it.
+			Out.bFlipGreen |= Slot.bFlipGreen && !Texture->bFlipGreenChannel;
 		}
 		if (!bUsed)
 		{
@@ -200,21 +238,105 @@ FTextureSetMatch MatchTextures(const TArray<UTexture2D*>& Textures, UGlazeRecipe
 
 TArray<TPair<FString, TArray<UTexture2D*>>> GroupTextureSets(const TArray<UTexture2D*>& Textures)
 {
-	TArray<TPair<FString, TArray<UTexture2D*>>> Sets;
+	struct FEntry
+	{
+		UTexture2D* Texture = nullptr;
+		FString Resolution;
+	};
+	struct FGroup
+	{
+		FString Key;
+		FString DisplayName;
+		FString Folder;
+		TArray<FEntry> Entries;
+	};
+
+	// 1. Same folder + same (case-folded) name = same candidate set.
+	TArray<FGroup> Groups;
 	for (UTexture2D* Texture : Textures)
 	{
 		if (!Texture)
 		{
 			continue;
 		}
-		const FString SetName = MatchTextureName(Texture->GetName()).SetName;
-		TPair<FString, TArray<UTexture2D*>>* Found = Sets.FindByPredicate(
-			[&SetName](const TPair<FString, TArray<UTexture2D*>>& P) { return P.Key.Equals(SetName, ESearchCase::IgnoreCase); });
-		if (!Found)
+		const FString Folder = FPackageName::GetLongPackagePath(Texture->GetOutermost()->GetName());
+		const FNameMatch Match = MatchTextureName(Texture->GetName());
+		FString Display = Match.SetName;
+		if (Display.IsEmpty())
 		{
-			Found = &Sets.Emplace_GetRef(SetName, TArray<UTexture2D*>());
+			// "Normal" alone: the folder names the set.
+			Folder.Split(TEXT("/"), nullptr, &Display, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+			if (Display.IsEmpty())
+			{
+				Display = Texture->GetName();
+			}
 		}
-		Found->Value.Add(Texture);
+		const FString Key = FoldCase(Folder) + TEXT("|") + FoldCase(Display);
+		FGroup* Group = Groups.FindByPredicate([&Key](const FGroup& G) { return G.Key == Key; });
+		if (!Group)
+		{
+			Group = &Groups.AddDefaulted_GetRef();
+			Group->Key = Key;
+			Group->DisplayName = Display;
+			Group->Folder = Folder;
+		}
+		Group->Entries.Add({ Texture, Match.Resolution });
+	}
+
+	// 2. Several resolutions of the same name are separate sets; maps without a resolution join the first one.
+	struct FSet
+	{
+		FString Name;
+		FString Folder;
+		TArray<UTexture2D*> Textures;
+	};
+	TArray<FSet> Result;
+	for (const FGroup& Group : Groups)
+	{
+		TArray<FString> Resolutions;
+		for (const FEntry& E : Group.Entries)
+		{
+			if (!E.Resolution.IsEmpty())
+			{
+				Resolutions.AddUnique(E.Resolution);
+			}
+		}
+		if (Resolutions.Num() <= 1)
+		{
+			FSet& Set = Result.AddDefaulted_GetRef();
+			Set.Name = Group.DisplayName;
+			Set.Folder = Group.Folder;
+			for (const FEntry& E : Group.Entries)
+			{
+				Set.Textures.Add(E.Texture);
+			}
+			continue;
+		}
+		const int32 First = Result.Num();
+		for (const FString& Res : Resolutions)
+		{
+			FSet& Set = Result.AddDefaulted_GetRef();
+			Set.Name = Group.DisplayName + TEXT(" (") + Res.ToUpper() + TEXT(")");
+			Set.Folder = Group.Folder;
+		}
+		for (const FEntry& E : Group.Entries)
+		{
+			const int32 Index = E.Resolution.IsEmpty() ? 0 : Resolutions.IndexOfByKey(E.Resolution);
+			Result[First + Index].Textures.Add(E.Texture);
+		}
+	}
+
+	// 3. Equal names from different folders: tell them apart by the folder.
+	TArray<TPair<FString, TArray<UTexture2D*>>> Sets;
+	for (const FSet& Set : Result)
+	{
+		FString Name = Set.Name;
+		const int32 Same = Algo::CountIf(Result, [&Set](const FSet& O) { return FoldCase(O.Name) == FoldCase(Set.Name); });
+		if (Same > 1)
+		{
+			Name += TEXT(" [") + Set.Folder + TEXT("]");
+		}
+		Sets.Emplace(Name, Set.Textures);
 	}
 	return Sets;
 }

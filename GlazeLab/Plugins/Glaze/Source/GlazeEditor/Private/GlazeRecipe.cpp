@@ -71,6 +71,21 @@ bool UGlazeRecipe::FromJson(const FString& Json)
 	{
 		return false;
 	}
+	// Read into a scratch recipe first: the converter accepts any number for an enum, and a bad file must not
+	// leave this recipe half-overwritten.
+	UGlazeRecipe* Scratch = NewObject<UGlazeRecipe>(GetTransientPackage());
+	if (!FJsonObjectConverter::JsonObjectToUStruct(Object.ToSharedRef(), GetClass(), Scratch, 0, CPF_Transient))
+	{
+		return false;
+	}
+	for (TFieldIterator<FEnumProperty> It(GetClass()); It; ++It)
+	{
+		const int64 Value = It->GetUnderlyingProperty()->GetSignedIntPropertyValue(It->ContainerPtrToValuePtr<void>(Scratch));
+		if (!It->GetEnum()->IsValidEnumValue(Value) || Value == It->GetEnum()->GetMaxEnumValue())
+		{
+			return false;
+		}
+	}
 	return FJsonObjectConverter::JsonObjectToUStruct(Object.ToSharedRef(), GetClass(), this, 0, CPF_Transient);
 }
 

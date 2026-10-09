@@ -4,12 +4,15 @@
 #include "GlazeMatcher.h"
 #include "GlazePack.h"
 #include "GlazeRecipe.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
 #include "Materials/Material.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MaterialShared.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/PackageName.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -97,6 +100,108 @@ bool FGlazeMatcherTest::RunTest(const FString&)
 		TestTrue(TEXT("ao from orm"), Recipe->AmbientOcclusion == Textures[2] && Recipe->AmbientOcclusionChannel == EGlazeChannel::R);
 		TestEqual(TEXT("no unmatched"), Match.Unmatched.Num(), 0);
 	}
+
+	// Review regressions ---------------------------------------------------------------------------------------
+
+	// A lone exact channel name is that channel, not a color map.
+	M = MatchTextureName(TEXT("Normal"));
+	TestTrue(TEXT("exact Normal"), HasSlot(M, EGlazeSlot::Normal) && M.Slots.Num() == 1);
+	TestTrue(TEXT("exact Normal has no set name"), M.SetName.IsEmpty());
+	M = MatchTextureName(TEXT("T_Roughness_2K"));
+	TestTrue(TEXT("exact Roughness"), HasSlot(M, EGlazeSlot::Roughness));
+	M = MatchTextureName(TEXT("AmbientOcclusion"));
+	TestTrue(TEXT("exact AmbientOcclusion is not glued"), HasSlot(M, EGlazeSlot::AmbientOcclusion) && M.SetName.IsEmpty());
+	{
+		UTexture2D* NormalTex = NewTexture(TEXT("Normal"));
+		UGlazeRecipe* R = NewObject<UGlazeRecipe>();
+		const FTextureSetMatch Match = MatchTextures({ NormalTex }, *R);
+		TestTrue(TEXT("single Normal -> Normal slot"), R->Normal == NormalTex && R->BaseColor == nullptr);
+		TestEqual(TEXT("single Normal matched"), Match.Unmatched.Num(), 0);
+	}
+
+	// Glued suffix with underscores inside the set name.
+	M = MatchTextureName(TEXT("Wood_Floor01BaseColor"));
+	TestTrue(TEXT("glued multi-token color"), HasSlot(M, EGlazeSlot::BaseColor));
+	TestEqual(TEXT("glued multi-token set"), M.SetName, FString(TEXT("Wood_Floor01")));
+	M = MatchTextureName(TEXT("Wood_Floor01Normal"));
+	TestTrue(TEXT("glued multi-token normal"), HasSlot(M, EGlazeSlot::Normal));
+	TestEqual(TEXT("glued multi-token normal set"), M.SetName, FString(TEXT("Wood_Floor01")));
+	M = MatchTextureName(TEXT("T_Wood_Floor01NormalGL_2K"));
+	TestTrue(TEXT("glued longest suffix is normalgl"), HasSlot(M, EGlazeSlot::Normal) && M.Slots[0].bFlipGreen);
+	TestEqual(TEXT("glued normalgl set"), M.SetName, FString(TEXT("Wood_Floor01")));
+
+	// Resolution is reported, not part of the set name.
+	M = MatchTextureName(TEXT("T_Wood_BC_4K"));
+	TestEqual(TEXT("resolution token"), M.Resolution, FString(TEXT("4k")));
+	TestEqual(TEXT("resolution not in set name"), M.SetName, FString(TEXT("Wood")));
+
+	// Already flipped texture is not flipped twice.
+	{
+		UTexture2D* Gl = NewTexture(TEXT("aerial_rocks_02_nor_gl_4k"));
+		UGlazeRecipe* R = NewObject<UGlazeRecipe>();
+		TestTrue(TEXT("gl name recommends flip"), MatchTextures({ Gl }, *R).bFlipGreen);
+		UTexture2D* GlFlipped = NewTexture(TEXT("aerial_rocks_03_nor_gl_4k"));
+		GlFlipped->bFlipGreenChannel = true;
+		UGlazeRecipe* R2 = NewObject<UGlazeRecipe>();
+		const FTextureSetMatch Match2 = MatchTextures({ GlFlipped }, *R2);
+		TestTrue(TEXT("flipped texture still normal"), R2->Normal == GlFlipped);
+		TestFalse(TEXT("no second flip"), Match2.bFlipGreen);
+	}
+
+	// Same name in different folders = different sets.
+	{
+		auto NewTextureIn = [](const TCHAR* Folder, const TCHAR* Name)
+		{
+			UPackage* Package = CreatePackage(*(FString(Folder) / Name));
+			return NewObject<UTexture2D>(Package, Name, RF_Transient);
+		};
+		UTexture2D* InColor = NewTextureIn(TEXT("/Game/GlazeTest/Interior"), TEXT("T_Wood_BC"));
+		UTexture2D* ExNormal = NewTextureIn(TEXT("/Game/GlazeTest/Exterior"), TEXT("T_Wood_N"));
+		UTexture2D* InNormal = NewTextureIn(TEXT("/Game/GlazeTest/Interior"), TEXT("T_Wood_N"));
+		const auto Folders = GroupTextureSets({ InColor, ExNormal, InNormal });
+		TestEqual(TEXT("folders split sets"), Folders.Num(), 2);
+		if (Folders.Num() == 2)
+		{
+			TestEqual(TEXT("interior set size"), Folders[0].Value.Num(), 2);
+			TestTrue(TEXT("interior set content"), Folders[0].Value.Contains(InColor) && Folders[0].Value.Contains(InNormal));
+			TestTrue(TEXT("exterior set content"), Folders[1].Value.Num() == 1 && Folders[1].Value[0] == ExNormal);
+			TestNotEqual(TEXT("equal names are told apart"), Folders[0].Key, Folders[1].Key);
+		}
+	}
+
+	// Different resolutions of one name = different sets; a map without resolution joins the first.
+	{
+		UTexture2D* Bc1 = NewTexture(TEXT("T_ResWood_BC_1K"));
+		UTexture2D* N4 = NewTexture(TEXT("T_ResWood_N_4K"));
+		UTexture2D* Orm4 = NewTexture(TEXT("T_ResWood_ORM_4K"));
+		UTexture2D* Bc4 = NewTexture(TEXT("T_ResWood_BC_4K"));
+		const auto Res = GroupTextureSets({ Bc1, N4, Orm4, Bc4 });
+		TestEqual(TEXT("two resolutions -> two sets"), Res.Num(), 2);
+		if (Res.Num() == 2)
+		{
+			TestTrue(TEXT("1K set"), Res[0].Value.Num() == 1 && Res[0].Value[0] == Bc1);
+			TestEqual(TEXT("4K set size"), Res[1].Value.Num(), 3);
+			UGlazeRecipe* R = NewObject<UGlazeRecipe>();
+			MatchTextures(Res[1].Value, *R);
+			TestTrue(TEXT("4K color is the 4K map"), R->BaseColor == Bc4);
+		}
+		UTexture2D* Plain = NewTexture(TEXT("T_MixWood_BC"));
+		UTexture2D* Mix4 = NewTexture(TEXT("T_MixWood_N_4K"));
+		TestEqual(TEXT("missing resolution joins"), GroupTextureSets({ Plain, Mix4 }).Num(), 1);
+	}
+
+	// Cyrillic names group case-insensitively.
+	{
+		UTexture2D* A = NewTexture(TEXT("T_Камень_BC"));
+		UTexture2D* B = NewTexture(TEXT("T_Камень_ORM"));
+		UTexture2D* C = NewTexture(TEXT("T_камень_N"));
+		const auto Cyr = GroupTextureSets({ A, B, C });
+		TestEqual(TEXT("cyrillic case folding"), Cyr.Num(), 1);
+		if (Cyr.Num() == 1)
+		{
+			TestEqual(TEXT("cyrillic set size"), Cyr[0].Value.Num(), 3);
+		}
+	}
 	return true;
 }
 
@@ -120,6 +225,25 @@ bool FGlazeRecipeJsonTest::RunTest(const FString&)
 	TestEqual(TEXT("remap"), B->RoughnessRemap.Max, 0.7f);
 	TestTrue(TEXT("blend"), B->BlendMode == EGlazeBlend::Masked);
 	TestTrue(TEXT("texture"), B->BaseColor == A->BaseColor && B->BaseColor != nullptr);
+
+	// An out-of-range enum is rejected and leaves the recipe untouched.
+	TSharedPtr<FJsonObject> Object;
+	FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Object);
+	for (auto& Field : Object->Values)
+	{
+		if (FString(*Field.Key).Equals(TEXT("RoughnessChannel"), ESearchCase::IgnoreCase))
+		{
+			Field.Value = MakeShared<FJsonValueNumber>(255);
+		}
+		if (FString(*Field.Key).Equals(TEXT("LerpAmount"), ESearchCase::IgnoreCase))
+		{
+			Field.Value = MakeShared<FJsonValueNumber>(0.9);
+		}
+	}
+	FString BadJson;
+	FJsonSerializer::Serialize(Object.ToSharedRef(), TJsonWriterFactory<>::Create(&BadJson));
+	TestFalse(TEXT("bad enum rejected"), B->FromJson(BadJson));
+	TestEqual(TEXT("bad json leaves recipe"), B->LerpAmount, 0.4f);
 	return true;
 }
 
@@ -370,6 +494,30 @@ bool FGlazePackTest::RunTest(const FString&)
 
 	UTexture2D* Noise = Pack::ImportNoise(Pack::Noises()[0], false);
 	TestTrue(TEXT("noise grayscale"), Noise && Noise->CompressionSettings == TC_Grayscale && !Noise->SRGB);
+
+	// A complete import reports no failures and every map is written to disk.
+	TArray<FString> Failed = { TEXT("stale") };
+	const TArray<UTexture2D*> Again = Pack::ImportMaterial(TEXT("Wood_Planks"), false, &Failed);
+	TestEqual(TEXT("reimport count"), Again.Num(), 3);
+	TestEqual(TEXT("no failed files"), Failed.Num(), 0);
+	for (UTexture2D* T : Again)
+	{
+		TestTrue(TEXT("saved to disk"), FPackageName::DoesPackageExist(T->GetOutermost()->GetName()));
+	}
+
+	// Failures are reported to the caller (and logged as errors).
+	AddExpectedError(TEXT("No textures found for pack material"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedError(TEXT("is incomplete"), EAutomationExpectedErrorFlags::Contains, 1);
+	Failed.Reset();
+	const TArray<UTexture2D*> None = Pack::ImportMaterial(TEXT("Glaze_No_Such_Material"), false, &Failed);
+	TestEqual(TEXT("missing material imports nothing"), None.Num(), 0);
+	TestTrue(TEXT("missing material is reported"), Failed.Num() > 0);
+
+	AddExpectedError(TEXT("Pack noise file not found"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestNull(TEXT("missing noise"), Pack::ImportNoise(TEXT("T_Noise_Glaze_No_Such"), false));
+
+	// The manifest is only cached after a successful read, and stays valid afterwards.
+	TestTrue(TEXT("manifest still available"), Pack::Materials().Num() >= 10);
 	return true;
 }
 
