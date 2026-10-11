@@ -98,7 +98,10 @@ Turn any texture set into a ready Material Instance in one window: auto map matc
 ## Статус публикации (2026-10-11)
 
 - `.uplugin`: версия `1.0.0`, Beta снята, `CreatedByURL` / `DocsURL` (README) / `SupportURL` (Issues), `FabURL` (листинг `754988a2-ceff-495d-b973-fbc3f1402220`), модуль только Win64.
-- Пакеты 5.7/5.8 пересобраны с FabURL, zip в релизе v1.0.0 обновлены.
+- **Отправлен на проверку 2026-10-10** (Pending approval): https://www.fab.com/portal/listings/754988a2-ceff-495d-b973-fbc3f1402220/edit
+  Тип Tools & Plugins → Engine Tools, Free. Теги только из справочника Fab (Triplanar, Parallax там нет).
+- Пакеты 5.7/5.8 пересобраны с FabURL, zip в релизе v1.0.0 обновлены. BuildPlugin выкидывает FabURL — `make_zips.py` теперь сам его возвращает.
+- Из истории git убрано упоминание Claude (2026-10-10). В коммитах его не писать.
 - Репозиторий публичный — ссылки DocsURL/SupportURL работают.
 - Картинки для загрузки в JPG: `fab/upload/` (в .gitignore, получены из `fab/images`).
 - Видео не делаем, только картинки (решение Никиты).
