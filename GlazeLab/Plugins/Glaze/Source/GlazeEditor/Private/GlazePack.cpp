@@ -1,3 +1,5 @@
+// Copyright 2026 Nikita Polushin. All Rights Reserved.
+
 #include "GlazePack.h"
 
 #include "AssetImportTask.h"

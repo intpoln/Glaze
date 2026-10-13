@@ -1,3 +1,5 @@
+// Copyright 2026 Nikita Polushin. All Rights Reserved.
+
 #include "GlazeRecipe.h"
 
 #include "Engine/Texture2D.h"

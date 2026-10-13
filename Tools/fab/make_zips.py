@@ -28,11 +28,23 @@ def restore_fab_url(uplugin: Path):
     print(f"{uplugin}  FabURL restored")
 
 
+def check_copyright(src: Path):
+    """Fab rejects code plugins whose source files lack a copyright comment (publisher + year) at the top."""
+    bad = [str(p.relative_to(src)) for p in sorted((src / "Source").rglob("*"))
+           if p.suffix in (".cpp", ".h", ".cs")
+           and not p.read_text(encoding="utf-8-sig").startswith(COPYRIGHT)]
+    if bad:
+        raise SystemExit(f"missing '{COPYRIGHT}' at the top of:\n  " + "\n  ".join(bad))
+
+
+COPYRIGHT = "// Copyright 2026 Nikita Polushin. All Rights Reserved."
+
 for v in ("5.7", "5.8"):
     src = ROOT / "packages" / v / "Glaze"
     out = ROOT / "packages" / f"Glaze_{v}_source.zip"
     if not (src / "Glaze.uplugin").is_file():
         raise SystemExit(f"no package: {src} (run Tools/package.sh {v})")
+    check_copyright(src)
     restore_fab_url(src / "Glaze.uplugin")
     n = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:

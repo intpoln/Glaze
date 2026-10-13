@@ -95,7 +95,9 @@ Turn any texture set into a ready Material Instance in one window: auto map matc
 
 Если Fab требует другой размер thumbnail (например, квадрат), обрежь `01_thumbnail.png` или поправь функцию `thumbnail()` в скрипте.
 
-## Статус публикации (2026-10-11)
+## Статус публикации (2026-10-13)
+
+- **2026-10-12 отказ Fab (TRC)**, единственный Fail: «All source and header files contain a commented copyright notice with Publisher name and year of publishing». Исправлено 2026-10-13: первая строка всех `.cpp/.h/.Build.cs` — `// Copyright 2026 Nikita Polushin. All Rights Reserved.`; `make_zips.py` проверяет её. Пакеты и zip пересобраны, в релизе v1.0.0 заменены (ссылки на Fab прежние). Следующий шаг: Никита жмёт «Submit for review». Важно: 3 повторные отправки без исправлений = окончательный отказ.
 
 - `.uplugin`: версия `1.0.0`, Beta снята, `CreatedByURL` / `DocsURL` (README) / `SupportURL` (Issues), `FabURL` (листинг `754988a2-ceff-495d-b973-fbc3f1402220`), модуль только Win64.
 - **Отправлен на проверку 2026-10-10** (Pending approval): https://www.fab.com/portal/listings/754988a2-ceff-495d-b973-fbc3f1402220/edit
